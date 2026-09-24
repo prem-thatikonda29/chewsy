@@ -275,25 +275,44 @@ verify before trusting.
 **Goal:** every technique here should map to a phase in the course mindmap
 and have a one-sentence "why this, not the obvious alternative" ready.
 
-- [ ] 3.1 Nutrient ratio features: `sugar_fiber_ratio`, `sat_fat_fat_ratio`.
+- [x] 3.1 Nutrient ratio features: `sugar_fiber_ratio`, `sat_fat_fat_ratio`.
   Justify: raw grams alone don't capture *proportion*, which is the
   nutritionally meaningful signal.
-- [ ] 3.2 `brands` → frequency encoding (not one-hot — thousands of unique
+  ✅ `FeatureCreator` in `src/features.py`; sugar_fiber uses a 0.5 g fiber
+  floor (finite ratios preserve the sugar signal for fiber-free products);
+  sat_fat_fat returns 0.0 for fat==0, NaN for missing fat (imputed later).
+- [x] 3.2 `brands` → frequency encoding (not one-hot — thousands of unique
   brands would explode dimensionality for little gain per brand).
-- [ ] 3.3 `categories_tags` → same frequency-encoding treatment, or target
+  ✅ `FrequencyEncoder` (7,323 brands → 1 column); maps built in `fit()`
+  only; unseen brands at inference → mean training frequency.
+- [x] 3.3 `categories_tags` → same frequency-encoding treatment, or target
   encoding computed from **train rows only** (state explicitly in code
   which rows the encoding map was fit on, to avoid the leakage pattern
   called out in the mindmap).
-- [ ] 3.4 Skew correction: log-transform `energy_100g`, `sugars_100g` (check
+  ✅ Frequency encoding (no target used at all), but tag-level, not
+  exact-combo: measured 5,528 unique combos, top-50 cover only 33.8% of
+  rows → score = mean document-frequency of the row's individual tags.
+  Train-only by construction: maps built in `fit()`; Stage 4 fits the
+  pipeline on train rows only (stated in the module docstring).
+- [x] 3.4 Skew correction: log-transform `energy_100g`, `sugars_100g` (check
   skewness before/after with a quick `.skew()` printout as evidence).
-- [ ] 3.5 **Filter-based selection on the numeric nutrient block** — before
+  ✅ Printout in `python src/features.py`. Evidence-driven amendment:
+  log1p **overshoots** energy (0.909 → −1.934) so energy uses sqrt
+  (0.909 → −0.173); sugars uses log1p as written (1.851 → 0.559).
+- [x] 3.5 **Filter-based selection on the numeric nutrient block** — before
   anything else touches these columns: drop any near-zero-variance
   column (`VarianceThreshold`), and check pairwise correlation between
   `fat_100g` and `saturated_fat_100g` (and any other suspiciously related
   pair) — drop or combine one side if correlation is high. This is the
   filter-method phase from the mindmap; it's cheap and it's the one
   selection family this project would otherwise skip entirely.
-- [ ] 3.6 **Scale the numeric nutrient block** (`StandardScaler`) inside the
+  ✅ `VarianceThreshold(1e-4)` runs first in the numeric branch (before
+  scaling): 0 drops (min variance 10.18 — all nutrients genuinely vary).
+  Correlation check: the PRD-suggested fat vs saturated_fat = **0.648**
+  → keep both; the real redundancy was **salt vs sodium = 0.982** with an
+  exact 2.5× unit relation → `sodium_100g` dropped. energy vs fat 0.870
+  kept (component relation, below threshold).
+- [x] 3.6 **Scale the numeric nutrient block** (`StandardScaler`) inside the
   `ColumnTransformer`'s numeric branch — **required**, not optional, for
   two separate reasons: (a) the Logistic Regression baseline in Stage 4
   is distance/gradient-based and will be dominated by whichever nutrient
@@ -302,12 +321,18 @@ and have a one-sentence "why this, not the obvious alternative" ready.
   — an unscaled PCA would just rediscover "whichever column has the
   biggest numbers," not a genuine energy-density axis. Scale *before* PCA,
   same transformer branch.
-- [ ] 3.7 TF-IDF on the ingredient text column
+  ✅ Numeric branch = imputer → VarianceThreshold → StandardScaler; PCA
+  diagnostics scale the same block separately.
+- [x] 3.7 TF-IDF on the ingredient text column
   (`ingredients_pseudo_text`, or `ingredients_text` if a future fetch
   variant provides raw text) (uni+bigrams, `max_features` capped
   at ~500, `min_df` to prune rare tokens, `max_df` to prune near-universal
   ones — this is the "vocabulary pruning" step from the mindmap).
-- [ ] 3.8 **Dimensionality reduction (do both of these — they answer
+  ✅ uni+bigrams, max_features=500 (vocab: 500), min_df=5, max_df=0.95,
+  stop_words='english'. Enhancement: TF-IDF reads
+  `product_name + " " + ingredients_pseudo_text` (names like "Potato
+  chips" carry processing signal); empty-safe.
+- [x] 3.8 **Dimensionality reduction (do both of these — they answer
   different mindmap phases):**
   - `TruncatedSVD` on the TF-IDF matrix (sparse-text equivalent of PCA) —
     compress to ~20–30 components, report explained variance.
@@ -316,14 +341,29 @@ and have a one-sentence "why this, not the obvious alternative" ready.
     scree plot / explained variance ratio, and name what PC1 represents
     (likely an "energy density" axis) — this is your direct parallel to
     the mock-test PCA example.
-- [ ] 3.9 Assemble everything into one `sklearn.Pipeline` +
+  ✅ SVD: 25 components in the pipeline, 48.3% cumulative EVR (diffuse —
+  ingredient vocabulary is spread across many terms). PCA (analysis only):
+  PC1 = **32.9%**; loadings fat +0.557 / sat-fat +0.495 / energy +0.454
+  vs carbs −0.325 / sugars −0.320 → PC1 is a **fat-energy-density vs
+  sugar-carbohydrate axis** (PRD's "energy density" guess, but with the
+  fat/sugar contrast made explicit). PCA deliberately NOT in the
+  pipeline: Stage 4 SHAP must explain real nutrients, not components.
+- [x] 3.9 Assemble everything into one `sklearn.Pipeline` +
   `ColumnTransformer` (numeric branch, categorical/frequency branch, text
   branch) inside `src/features.py`. **Any custom transformer class must
   live in this importable file**, not inline in a notebook — this is the
   exact `FeatureCreator` pickling bug the mindmap calls out; avoid it now.
-- [ ] 3.10 Unit test: `tests/test_features.py` — pipeline `.fit_transform()`
+  ✅ `build_feature_pipeline(include_text=, include_categorical=)` —
+  3 branches, all custom classes module-level in `src/features.py`.
+  Flags exist for Stage 4's three runs. Final matrix: **19,998 × 44**
+  (17 numeric + 1 brand + 1 category + 25 SVD), 0 non-finite values.
+- [x] 3.10 Unit test: `tests/test_features.py` — pipeline `.fit_transform()`
   runs on a small sample without error and produces the expected shape.
-- [ ] 3.11 Commit: `feat: feature engineering pipeline`.
+  ✅ 11 tests pass: both shapes (numeric-only/full), ratio math, both
+  encoders incl. unseen-value fallbacks, NaN/negative/unseen inference
+  input, joblib round-trip (Stage 5 pickle guard), feature names (SHAP),
+  diagnostics evidence keys.
+- [x] 3.11 Commit: `feat: feature engineering pipeline`.
 
 ### Stage 4 — Modeling & Experiment Tracking
 **Goal:** at least 3 genuinely different runs, tracked, with one promoted.
