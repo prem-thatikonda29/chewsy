@@ -31,7 +31,7 @@ import time
 import urllib.parse
 import urllib.request
 
-TARGET_PER_CLASS = 1500      # >> the ~200/class minimum from Stage 1.1
+TARGET_PER_CLASS = 5000      # 20k rows total; API caps paging at 10000/class
 PAGE_SIZE = 200               # confirmed working ceiling for this API
 OUT_PATH = "data/raw/openfoodfacts_training_set.csv"
 USER_AGENT = "Chewsy-CourseProject/1.0 (student project)"

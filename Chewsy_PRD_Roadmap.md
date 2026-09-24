@@ -189,20 +189,26 @@ skill you need anyway rather than adding a new one. `slice_openfoodfacts.py`
 is retired; `fetch_training_set.py` replaces it.
 
 - [x] 1.1 Run `python src/fetch_training_set.py` (already written and
-  live-tested against the real API — pulls 1500 rows per NOVA class,
+  live-tested against the real API — pulls 5000 rows per NOVA class,
   4 classes, balanced by construction since each class is fetched by an
-  explicit `nova_groups:<n>` query).
+  explicit `nova_groups:<n>` query. Originally 1500/class; rescaled to
+  5000/class on request — 20k rows total, ~5.6% of the bulk dump's row
+  count. The API hard-caps paging at 50 pages × 200 = 10,000/class
+  (page 51 → HTTP 400), so 5000/class sits comfortably under the
+  ceiling with room to scale further.)
   **Done when:** `data/raw/openfoodfacts_training_set.csv` exists with
   ~6000 rows and a perfectly even `nova_group` value count across
   1/2/3/4 (verified in testing: 50/50/50/50 on a smoke-test run at
-  `TARGET_PER_CLASS=50` before scaling up to the real 1500/class pull).
-  ✅ 6000 rows, exactly 1500/1500/1500/1500.
+  `TARGET_PER_CLASS=50` before scaling up to the real pull).
+  ✅ 20,000 rows, exactly 5000/5000/5000/5000.
 - [x] 1.2 Expect real, uneven missingness on optional fields
   (`additives_n`, `fiber_100g`, `unknown_ingredients_n` were ~65–80%
-  null in live testing) — this is normal OFF sparsity, not a fetch bug;
-  Stage 2's conditional imputation already accounts for it.
-  ✅ Observed: `unknown_ingredients_n` 75%, `additives_n` 72%,
-  `fiber_100g` 63% null — matches expectation.
+  null in live testing at 1500/class; at 5000/class the deeper pages
+  are a bit better documented — see null % report from `clean.py`) —
+  this is normal OFF sparsity, not a fetch bug; Stage 2's conditional
+  imputation already accounts for it.
+  ✅ Observed at 20k: `unknown_ingredients_n` 69%, `additives_n` 70%,
+  `fiber_100g` 53% null — matches expectation.
 - [x] 1.3 India stays a **live-demo talking point only**, not a training
   filter — the model trains on a global, class-balanced pull; the live
   barcode lookup at demo time can still be any real product, Indian or
