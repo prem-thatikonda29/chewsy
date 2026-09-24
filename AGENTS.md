@@ -12,11 +12,12 @@ label. This tool fills in a classification the community hasn't labeled yet —
 the same job Yuka does commercially. Do not frame work as "I analyzed a dataset."
 
 **Trained vs. live (memorize this — it's the judge's most likely question):**
-- **Trained offline, once:** the model. `fetch_training_set.py` pulls ~6000
-  community-labeled products; Stage 4 trains a classifier on them; Stage 5
+- **Trained offline, once:** the model. `fetch_training_set.py` pulls
+  20,000 community-labeled products (5,000/NOVA-class; 19,998 after
+  Stage 2 cleaning); Stage 4 trains a classifier on them; Stage 5
   freezes it as `model.joblib`. It does not change until you retrain.
 - **Live, every scan:** the input, not the model. The scanned barcode is
-  almost certainly *not* one of the ~6000 training rows — the app fetches
+  almost certainly *not* one of the 20,000 training rows — the app fetches
   that product's raw nutrients/ingredients from the OFF API at that instant
   and feeds them into the frozen model.
 - **The rule:** the model computes the verdict on **every scan, 100% of the
@@ -34,7 +35,8 @@ the same job Yuka does commercially. Do not frame work as "I analyzed a dataset.
 
 **Non-goals (state if asked, don't apologize):** not predicting Nutri-Score;
 not a meal-logging/calorie app; not global coverage (training pulls are
-class-balanced and capped ~1500/class; India is a demo story, never a
+class-balanced and capped 5,000/class — API hard-ceiling is 10,000/class;
+India is a demo story, never a
 training filter — see Stage 1).
 
 **Deadline:** submission + presentation 26 Sept 2026. ~2 days of build time as
@@ -103,6 +105,7 @@ chewsy/
 ├── dvc.yaml
 ├── dvc.lock                  (generated)
 ├── requirements.txt
+├── conftest.py                (pytest: puts repo root on sys.path)
 ├── data/
 │   ├── raw/                  (DVC-tracked, not git-tracked)
 │   └── processed/            (DVC-tracked)
@@ -130,6 +133,9 @@ chewsy/
 ├── tests/
 │   ├── test_features.py
 │   └── test_api.py
+├── docs/
+│   └── data_quality_report.md (LOCAL ONLY — in .git/info/exclude,
+│                               never git add/push; append evidence)
 ├── Dockerfile                 (multi-stage: Node build + Python runtime)
 ├── entrypoint.sh
 └── .github/workflows/ci.yml
@@ -153,6 +159,14 @@ out as deleted), `en.openfoodfacts.org.products.tsv`,
 
 Work the PRD stages in order (0→13). For each stage:
 
+0. **Propose before you build.** Present the stage plan first — the PRD
+   checklist plus any evidence-backed enhancements or deviations you
+   intend — and get approval before writing code. The PRD is a baseline
+   to improve on, not a script: Stages 2 and 3 both deviated after
+   measuring the data (sqrt vs log1p for energy skew, tag-level category
+   encoding, PCA kept out of the pipeline). Every deviation must be
+   backed by a printed measurement and recorded in the PRD checkbox notes
+   and `docs/data_quality_report.md`.
 1. Re-read that stage's section in `Chewsy_PRD_Roadmap.md`.
 2. Implement every checklist item.
 3. Verify the "Done when" condition before moving on.
@@ -160,6 +174,30 @@ Work the PRD stages in order (0→13). For each stage:
 
 Priority reminder: MUST = non-negotiable; SHOULD = cut if behind. Timeline blocks
 and cut order are in PRD §3 and Hard rule 6.
+
+## As-built interfaces (Stages 0–3, as of 25 Sep 2026)
+
+- **Data:** `data/processed/openfoodfacts_clean.csv` — 19,998 × 22,
+  DVC-tracked, 0 nulls at write, classes {1:5000, 2:4998, 3:5000,
+  4:5000}. The bulk TSV was deleted from disk — nothing references it.
+- **Feature pipeline:** `src/features.py::build_feature_pipeline(
+  include_text=True, include_categorical=True, n_svd_components=25, ...)`
+  → 44 columns (17 numeric + brand freq + tag freq + 25 SVD). Input must
+  be a **DataFrame** with the cleaned column names. Stage 4 runs:
+  Run 1 = both flags False; Run 2 = text only; Run 3 = defaults.
+- **Inference-robust inside** (median imputer, NaN text → `""`, unseen
+  brand/tag → mean training frequency, negatives → impute) but it does
+  NOT re-run Stage 2 field normalization — Stage 6 must normalize the
+  raw OFF response (brand parse, mass cap, HTML unescape) first; see the
+  Stage 6 handoff note in the PRD.
+- **PCA is analysis-only** (SHAP must explain real nutrients); SVD lives
+  in the text branch. `get_feature_names_out()` gives SHAP labels.
+- **Evidence:** `python src/features.py` prints skew/filter/PCA/SVD
+  numbers. Full evidence log: `docs/data_quality_report.md` —
+  **local-only** (listed in `.git/info/exclude`): append each stage's
+  findings for Q&A prep, never `git add`/push it.
+- **`conftest.py`** at repo root puts the root on `sys.path` so bare
+  `pytest` can `import src.*`.
 
 ## Key commands
 
@@ -170,6 +208,9 @@ pip install -r requirements.txt
 
 # Tests
 pytest
+
+# Feature-engineering evidence (skew/filter/PCA/SVD printout)
+python src/features.py
 
 # Data pipeline
 dvc init
@@ -191,12 +232,14 @@ docker run -p 8000:8000 -p 3000:3000 chewsy
 ## Standing risks (PRD §6)
 
 - `nova_group` isn't in the bulk TSV export by default (resolved: Stage 1
-  now fetches training data from the live search API instead)
+  now fetches training data from the live search API instead; the TSV
+  itself was deleted from disk — only the gitignore entry remains)
 - India-only training is unviable (< 25 labeled rows/class) — India is a
   live-demo talking point only, never a training filter
 - NOVA class balance is enforced by construction (one `nova_groups:<n>`
-  query per class in `fetch_training_set.py`) — verify the printed balance
-  after Stage 1.1 anyway; if any class comes back short of ~200 rows, check
+  query per class in `fetch_training_set.py`) — verified ✅ at 20k
+  (5000/5000/5000/5000 pre-dedup). If you ever re-pull, re-check the
+  printed balance; if any class comes back short of ~200 rows, check
   for paging issues or raise `TARGET_PER_CLASS` and re-run
 - Live API dependency — Stage 1's training fetch and Stage 6's demo lookup
   both hit OFF live; timeouts are not optional on either

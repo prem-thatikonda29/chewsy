@@ -21,8 +21,9 @@ in a classification the community hasn't gotten to yet, the same job Yuka
 (60M+ users) does commercially.
 
 **Trained vs. live (the rule — state it exactly like this if asked):**
-- **Offline, once:** the model. Stage 1 fetches ~6000 community-labeled
-  products → Stage 4 trains → Stage 5 freezes `model.joblib`. No live
+- **Offline, once:** the model. Stage 1 fetches 20,000 community-labeled
+  products (5,000/class → 19,998 after Stage 2 cleaning) → Stage 4
+  trains → Stage 5 freezes `model.joblib`. No live
   retraining, ever.
 - **Live, every scan:** only the input. The scanned barcode is almost
   certainly not a training row — the app fetches that product's raw
@@ -53,7 +54,8 @@ in a classification the community hasn't gotten to yet, the same job Yuka
   predicting it would be reverse-engineering arithmetic, not real ML.
 - Not building a meal-logging or calorie-tracking app.
 - Not attempting global coverage — training pulls are class-balanced and
-  deliberately capped (~1500/class in Stage 1), not a full-corpus crawl;
+  deliberately capped (5000/class in Stage 1, under the API's 10,000/class
+  hard ceiling), not a full-corpus crawl;
   India is a demo story, not a training filter (see Stage 1).
 
 ---
@@ -197,7 +199,7 @@ is retired; `fetch_training_set.py` replaces it.
   (page 51 → HTTP 400), so 5000/class sits comfortably under the
   ceiling with room to scale further.)
   **Done when:** `data/raw/openfoodfacts_training_set.csv` exists with
-  ~6000 rows and a perfectly even `nova_group` value count across
+  20,000 rows and a perfectly even `nova_group` value count across
   1/2/3/4 (verified in testing: 50/50/50/50 on a smoke-test run at
   `TARGET_PER_CLASS=50` before scaling up to the real pull).
   ✅ 20,000 rows, exactly 5000/5000/5000/5000.
@@ -368,6 +370,19 @@ and have a one-sentence "why this, not the obvious alternative" ready.
 ### Stage 4 — Modeling & Experiment Tracking
 **Goal:** at least 3 genuinely different runs, tracked, with one promoted.
 
+**Stage 3 handoff — use, don't rebuild:** `build_feature_pipeline()`
+from `src/features.py` (output = 44 cols for the full config):
+- Run 1 (4.2) = `include_text=False, include_categorical=False`
+  → nutrients + ratios + counts + indicators only, exactly as 4.2 says.
+- Run 2 (4.3) = `include_text=True, include_categorical=False`
+  → Run 1 + TF-IDF→SVD text branch (the "add text" delta stays clean).
+- Run 3 (4.4) = both `True` (defaults) → full feature set.
+Feature names for the SHAP plot:
+`pipeline.named_steps["features"].get_feature_names_out()`.
+PCA deliberately has **no** features here (SHAP must explain real
+nutrients; see 3.8) — but the PC1 finding (fat-density vs sugar-density,
+32.9%) is presentation material (docs report §6, local-only file).
+
 - [ ] 4.1 Set `mlflow.set_tracking_uri("sqlite:///mlflow.db")`.
 - [ ] 4.2 **Run 1 (baseline):** nutrients + ratios only, no text — Logistic
   Regression. Log params, accuracy/F1 (macro, since NOVA classes are
@@ -385,6 +400,12 @@ and have a one-sentence "why this, not the obvious alternative" ready.
 - [ ] 4.7 Commit: `feat: MLflow tracking + 3 experiments, champion registered`.
 
 ### Stage 5 — Packaging
+**Stage 3 handoff:** the feature-stage pickle round-trip already passes
+(`tests/test_features.py::test_joblib_roundtrip_reproduces_transform`) —
+5.2 extends that to the *model*-bearing pipeline. All classes are
+module-level in `src/features.py`, so a fresh `joblib.load` resolves
+them; run tests from the repo root (root `conftest.py` puts it on
+`sys.path`).
 - [ ] 5.1 `joblib.dump()` the full fitted pipeline (features + model) as
   `models/model.joblib`.
 - [ ] 5.2 Verify it reloads cleanly in a fresh Python process (`joblib.load`
@@ -395,6 +416,21 @@ and have a one-sentence "why this, not the obvious alternative" ready.
 - [ ] 5.4 Commit: `feat: packaged model artifact`.
 
 ### Stage 6 — FastAPI Serving Layer
+**Stage 2/3 handoff — the feature row the API sends:**
+- Input to the fitted pipeline is a **one-row `pd.DataFrame`** with the
+  columns `fetch_training_set.py` keeps (the cleaned input space).
+- The pipeline is inference-robust *inside* (median imputer for missing
+  nutrients, empty text → `""`, unseen brand/tag → mean training
+  frequency, negative nutrients → NaN → impute) — but it does **not**
+  re-run Stage 2's field normalizations. The API must apply the same
+  normalizations to the raw OFF response first: parse list-repr brands
+  (`['X']` → `X`, lowercase), cap mass values at 100 g, negatives →
+  NaN, HTML-unescape names. Consider exposing a shared helper from
+  `src/clean.py` rather than duplicating the logic (Hard rule: one
+  source of truth).
+- `nova_group` from the OFF response must never enter that frame
+  (Hard rule 11) — assert it, same pattern as Stage 2.5.
+
 **Goal:** this is where the "live" feeling of the product actually lives.
 
 - [ ] 6.1 `app/off_client.py`: a function `fetch_product(barcode: str)` that
@@ -521,6 +557,10 @@ sequence of scripts you happened to run in order.
   public IP, not just `localhost`.
 
 ### Stage 12 — Lightweight Monitoring (trim to this if short on time)
+**Stage 2/3 handoff:** `training_reference.csv` should snapshot the
+**input** space — the 22 cleaned columns (what a live API row looks like
+after Stage 2 normalization), not the 44 transformed features — drift is
+about what *arrives*, and live rows start in that space too.
 - [ ] 12.1 At minimum: structured request logging in FastAPI (barcode,
   latency, predicted class) and a working `/metrics` endpoint.
 - [ ] 12.2 If time allows: a small script comparing live-fetched nutrient
@@ -557,7 +597,8 @@ sequence of scripts you happened to run in order.
   swap back to a bulk-export-based approach, re-verify this before
   trusting it, don't assume the column exists.
 - **Search API's reported `count` is capped at 10,000 and not exact** —
-  fine for this project (we only pull 1500/class), but don't rely on that
+  fine for this project (we pull 5000/class, under the cap), but don't rely
+  on that
   number for anything beyond "there are plenty of rows available."
 - **NOVA class imbalance** — check this in Stage 1.1; if one class is nearly
   empty, your model will look "accurate" while being useless on it. Use
