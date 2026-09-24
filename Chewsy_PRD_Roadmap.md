@@ -143,9 +143,11 @@ until that condition is verifiably true.
 ### Stage 0 — Repo & Environment Setup
 **Goal:** a real Git history starts here, not with a giant dump commit.
 
-- [ ] 0.1 `git init`, create `.gitignore` **before** the first `git add`
-  (must exclude `.venv/`, `data/raw/*` + `data/processed/*` **with
-  `!*.dvc` re-includes** so pointer files stay trackable,
+- [x] 0.1 `git init`, create `.gitignore` **before** the first `git add`
+  (must exclude `.venv/`, `data/raw/*.csv` + `data/processed/*.csv`
+  — ignore only the data files, **not** the directories: a
+  `data/raw/*` pattern makes DVC's `collect_files` prune `data/raw/`
+  and miss the `.dvc` pointer),
   `en.openfoodfacts.org.products.tsv`, `models/*.joblib`,
   `__pycache__/`, `frontend/node_modules/`, `frontend/.next/` —
   the last two don't exist yet at this stage, but set them up front so
@@ -157,15 +159,15 @@ until that condition is verifiably true.
   **Done when:** `git status` shows no venv/data/TSV files as
   untracked-but-wanted, and a dry-run confirms `mlflow.db`/`mlruns/`/`*.dvc`
   would be addable once they exist.
-- [ ] 0.2 Create the folder structure in Section 4 (empty `.gitkeep` files
+- [x] 0.2 Create the folder structure in Section 4 (empty `.gitkeep` files
   where needed).
   **Done when:** structure matches Section 4 exactly.
-- [ ] 0.3 `requirements.txt` pinned: `pandas`, `scikit-learn`, `fastapi`,
+- [x] 0.3 `requirements.txt` pinned: `pandas`, `scikit-learn`, `fastapi`,
   `uvicorn`, `mlflow`, `dvc`, `shap`, `requests`, `joblib`,
   `pytest`, `python-multipart`. (Frontend deps are separate — `frontend/package.json`
   in Stage 7, not this file.)
   **Done when:** `pip install -r requirements.txt` succeeds in a fresh venv.
-- [ ] 0.4 First commit: `chore: repo scaffolding`.
+- [x] 0.4 First commit: `chore: repo scaffolding`.
   **Done when:** `git log` shows this as commit #1 with only structure/config
   files, no data or model files.
 
@@ -186,7 +188,7 @@ backend already calls at inference time (Stage 6), so this reuses a
 skill you need anyway rather than adding a new one. `slice_openfoodfacts.py`
 is retired; `fetch_training_set.py` replaces it.
 
-- [ ] 1.1 Run `python src/fetch_training_set.py` (already written and
+- [x] 1.1 Run `python src/fetch_training_set.py` (already written and
   live-tested against the real API — pulls 1500 rows per NOVA class,
   4 classes, balanced by construction since each class is fetched by an
   explicit `nova_groups:<n>` query).
@@ -194,19 +196,25 @@ is retired; `fetch_training_set.py` replaces it.
   ~6000 rows and a perfectly even `nova_group` value count across
   1/2/3/4 (verified in testing: 50/50/50/50 on a smoke-test run at
   `TARGET_PER_CLASS=50` before scaling up to the real 1500/class pull).
-- [ ] 1.2 Expect real, uneven missingness on optional fields
+  ✅ 6000 rows, exactly 1500/1500/1500/1500.
+- [x] 1.2 Expect real, uneven missingness on optional fields
   (`additives_n`, `fiber_100g`, `unknown_ingredients_n` were ~65–80%
   null in live testing) — this is normal OFF sparsity, not a fetch bug;
   Stage 2's conditional imputation already accounts for it.
-- [ ] 1.3 India stays a **live-demo talking point only**, not a training
+  ✅ Observed: `unknown_ingredients_n` 75%, `additives_n` 72%,
+  `fiber_100g` 63% null — matches expectation.
+- [x] 1.3 India stays a **live-demo talking point only**, not a training
   filter — the model trains on a global, class-balanced pull; the live
   barcode lookup at demo time can still be any real product, Indian or
   otherwise, since that's a separate live API call at inference time,
   unrelated to what the training set was built from.
-- [ ] 1.4 `dvc init`, then `dvc add data/raw/openfoodfacts_training_set.csv`.
+- [x] 1.4 `dvc init`, then `dvc add data/raw/openfoodfacts_training_set.csv`.
   **Done when:** a `.dvc` file exists for the training set and it's the
   object being git-tracked, not the CSV itself.
-- [ ] 1.5 Commit: `feat: initial data acquisition via live API + DVC tracking`.
+  ✅ Pointer committed in `e4340cc`; CSV is gitignored. (Fixed a
+  `.gitignore` bug where `data/raw/*` made DVC prune the dir and miss
+  the pointer — now `data/raw/*.csv` only.)
+- [x] 1.5 Commit: `feat: initial data acquisition via live API + DVC tracking`.
 
 ### Stage 2 — Data Verification & Cleaning
 **Goal:** the same rigor applied to every prior dataset in this project —

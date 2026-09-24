@@ -1,14 +1,12 @@
 # Virtual env
 .venv/
 
-# Data CSVs live in DVC, not git — but the .dvc pointer files DO get committed
-data/raw/*
-data/processed/*
-!/data/raw/*.dvc
-!/data/processed/*.dvc
-# (also keep directory placeholders trackable if ever added)
-!data/raw/.gitkeep
-!data/processed/.gitkeep
+# Data CSVs live in DVC, not git — but the .dvc pointer files DO get committed.
+# Ignore only the data files themselves (not the directories), so DVC's
+# collect_files walk doesn't prune data/raw/ and miss the .dvc pointer.
+data/raw/*.csv
+data/processed/*.csv
+data/processed/*.joblib
 
 # Bulk OFF export (~1GB) — never commit; Stage 1 uses fetch_training_set.py
 en.openfoodfacts.org.products.tsv

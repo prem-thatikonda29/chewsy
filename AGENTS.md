@@ -135,11 +135,14 @@ chewsy/
 └── .github/workflows/ci.yml
 ```
 
-`.gitignore` must exclude: `.venv/`, `data/raw/*` + `data/processed/*`
-**but re-include `*.dvc` pointers** (`!/data/raw/*.dvc`,
-`!/data/processed/*.dvc` — git tracks the pointers, DVC tracks the CSVs),
-`en.openfoodfacts.org.products.tsv`, `models/*.joblib`, `__pycache__/`,
-`frontend/node_modules/`, `frontend/.next/`.
+`.gitignore` must exclude: `.venv/`, `data/raw/*.csv` +
+`data/processed/*.csv` (ignore only the data files, **never** the
+directories themselves — a `data/raw/*` pattern makes DVC's
+`collect_files` prune `data/raw/` via `scm.is_ignored("data/raw/")`
+and silently skip the `.dvc` pointer, so `dvc status` reports the
+out as deleted), `en.openfoodfacts.org.products.tsv`,
+`models/*.joblib`, `__pycache__/`, `frontend/node_modules/`,
+`frontend/.next/`.
 
 `.gitignore` must **NOT** exclude (grading evidence — commit these):
 `mlflow.db`, `mlruns/` (MLflow runs + registry + Stage 4 plot artifacts),
