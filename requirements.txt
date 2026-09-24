@@ -1,0 +1,13 @@
+# Pinned deps for the Chewsy ML + API backend (Stage 0.3).
+# Frontend deps live in frontend/package.json (Stage 7).
+pandas==3.0.6
+scikit-learn==1.9.1
+fastapi==0.141.1
+uvicorn==0.53.0
+mlflow==3.16.1
+dvc==3.67.1
+shap==0.52.0
+requests==2.34.2
+joblib==1.6.0
+pytest==9.1.1
+python-multipart==0.0.32
