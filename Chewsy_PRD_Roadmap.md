@@ -482,11 +482,25 @@ nutrients; see 3.8) — but the PC1 finding (fat-density vs sugar-density,
 
 ### Stage 5 — Packaging
 **Stage 3 handoff:** the feature-stage pickle round-trip already passes
-(`tests/test_features.py::test_joblib_roundtrip_reproduces_transform`) —
-5.2 extends that to the *model*-bearing pipeline. All classes are
+(`tests/test_features.py::test_joblib_roundtrip_reproduces_transform` —
+5.2 extends that to the *model*-bearing pipeline). All classes are
 module-level in `src/features.py`, so a fresh `joblib.load` resolves
 them; run tests from the repo root (root `conftest.py` puts it on
 `sys.path`).
+
+**Stage 4 handoff (25 Sep 2026):** the model is the **XGBoost champion**
+(macro-F1 0.9494). Get it either way — both give identical weights
+(refit is deterministic, stratified 80/20 `random_state=42`):
+- `mlflow.sklearn.load_model("models:/chewsy-nova@champion")` →
+  `joblib.dump(...)` as `models/model.joblib` (provenance-clean: it is
+  the exact registered artifact), or
+- refit `src.train.build_full_pipeline(5)` on the same split.
+The Pipeline contains `NovaLabelAdapter` (xgboost label shim, lives in
+`src/features.py` — Hard rule 4 already satisfied for pickle). `train.py`
+drops `code` from `X`, so 5.3's `training_reference.csv` should snapshot
+the feature columns without it. Comparison runs in MLflow carry **no**
+model binaries by design (champion-only logging) — don't go looking for
+per-run models; metrics/plots/registry are all committed and sufficient.
 - [ ] 5.1 `joblib.dump()` the full fitted pipeline (features + model) as
   `models/model.joblib`.
 - [ ] 5.2 Verify it reloads cleanly in a fresh Python process (`joblib.load`
@@ -523,6 +537,17 @@ them; run tests from the repo root (root `conftest.py` puts it on
   source of truth).
 - `nova_group` from the OFF response must never enter that frame
   (Hard rule 11) — assert it, same pattern as Stage 2.5.
+
+**Stage 4 handoff (25 Sep 2026):** the shipped model is the XGBoost
+champion wrapped in `NovaLabelAdapter` — it predicts NOVA **1..4** (the
+adapter decodes xgboost's 0-based ids) and exposes `predict_proba`, so
+`/predict`'s **confidence comes from the model itself**, never from OFF.
+Indicator columns (`*_was_missing`) are absent from API rows *and* absent
+from the MLflow signature's required columns (input example marks them
+optional) — `FeatureCreator` computes them at transform time, exactly as
+the pipeline's inference-robust behavior above describes. The joblib
+path has no schema enforcement anyway; this only confirms the row shape
+matches what the champion was packaged with.
 
 **Goal:** this is where the "live" feeling of the product actually lives.
 

@@ -175,7 +175,7 @@ Work the PRD stages in order (0→13). For each stage:
 Priority reminder: MUST = non-negotiable; SHOULD = cut if behind. Timeline blocks
 and cut order are in PRD §3 and Hard rule 6.
 
-## As-built interfaces (Stages 0–3, as of 25 Sep 2026)
+## As-built interfaces (Stages 0–4, as of 25 Sep 2026)
 
 - **Data:** `data/processed/openfoodfacts_clean.csv` — 19,998 × 22,
   DVC-tracked; nutrient NaNs are **retained on purpose** (45,453 nulls)
@@ -188,8 +188,9 @@ and cut order are in PRD §3 and Hard rule 6.
   → 44 columns (17 numeric + brand freq + tag freq + 25 SVD). Head steps
   in order: `create` → `impute` (`GroupMedianImputer`, train-fit) →
   `skew` → `ColumnTransformer`. Input must
-  be a **DataFrame** with the cleaned column names. Stage 4 runs:
-  Run 1 = both flags False; Run 2 = text only; Run 3 = defaults.
+  be a **DataFrame** with the cleaned column names. Stage 4 run mapping
+  (as built): Run 1 = both flags False; Run 2 = text only; Runs 3–6 =
+  defaults.
 - **Inference-robust inside** (`GroupMedianImputer` group→global median,
   median imputer, NaN text → `""`, unseen brand/tag → mean training
   frequency, negatives → impute, `*_was_missing` indicators computed
@@ -199,6 +200,33 @@ and cut order are in PRD §3 and Hard rule 6.
   the PRD.
 - **PCA is analysis-only** (SHAP must explain real nutrients); SVD lives
   in the text branch. `get_feature_names_out()` gives SHAP labels.
+- **Trained model (Stage 4, as built):** `src/train.py` —
+  `python src/train.py --runs 1 2 3 4 5 6`, then
+  `python src/train.py --register`. Six runs in MLflow experiment
+  `chewsy-nova` (tracking `sqlite:///mlflow.db`, committed). Macro-F1:
+  run1 LR nutrients-only 0.7973 → run2 LR +text 0.8875 (text worth
+  **+0.09**), run3 RandomForest 0.9415, run4 HistGB 0.9442,
+  **run5 XGBoost 0.9494 = winner → registry `chewsy-nova` v1 alias
+  `champion`** (source run `champion_packaging_run5`), run6 KNN 0.8555.
+  Split: stratified 80/20 `random_state=42`, split before any fit —
+  refit is deterministic, so `build_full_pipeline(5)` on the same split
+  reproduces the champion's weights exactly. `X` excludes `code`
+  (barcode identifier, not a feature; uint64 breaks signature inference).
+- **`NovaLabelAdapter`** (in `src/features.py`, Hard rule 4): xgboost ≥ 2
+  rejects class ids outside `[0..n-1]`, so the wrapper encodes
+  {1,2,3,4}→{0,1,2,3} in `fit` and decodes predictions back — every
+  artifact still predicts NOVA **1..4**, and `predict_proba` is exposed
+  (Stage 6's confidence comes from it). Never defines custom classes in
+  `src/train.py` — executed as `python src/train.py` they pickle as
+  `__main__.*`, unimportable in a fresh process (that bug bit us once).
+- **Champion-only MLflow model logging is deliberate:** comparison runs
+  store params/metrics/plots only (PRD 4.2–4.4 don't require model
+  binaries); only the champion is logged as an artifact (pickle format,
+  17 MB) because MLflow's default skops serialization inflated identical
+  pipelines to 78–155 MB each → 673 MB of `mlruns/`, over GitHub's
+  100 MB/file limit. Don't "fix" this by logging every run's model.
+  `mlruns/` + `mlflow.db` as committed = 19 MB and contain everything
+  grading needs (metrics, confusion matrices, SHAP plots, registry).
 - **Evidence:** `python src/features.py` prints skew/filter/PCA/SVD
   numbers. Full evidence log: `docs/data_quality_report.md` —
   **local-only** (listed in `.git/info/exclude`): append each stage's
@@ -224,7 +252,9 @@ dvc init
 dvc add data/raw/openfoodfacts_training_set.csv
 dvc repro
 
-# Experiment tracking
+# Experiment tracking (Stage 4)
+python src/train.py --runs 1 2 3 4 5 6   # six tracked runs
+python src/train.py --register           # winner → alias 'champion'
 mlflow ui   # sqlite:///mlflow.db
 
 # Local serving
