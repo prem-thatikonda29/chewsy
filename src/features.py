@@ -2,13 +2,17 @@
 
 Evidence-backed decisions (full writeup: docs/data_quality_report.md §6):
 
-- ``sodium_100g`` is excluded from NUMERIC_COLS: corr(salt, sodium) = 0.982
+- ``sodium_100g`` is excluded from NUMERIC_COLS: corr(salt, sodium) = 0.967
+  (0.982 before the leak fix, when both columns were group-median-filled)
   with an exact 2.5x unit relation (salt = 2.5 * sodium) — pure redundancy,
   so one side is dropped (PRD 3.5). The pair PRD suggested checking,
-  fat vs saturated_fat, measures only 0.648 — both kept.
+  fat vs saturated_fat, measures only 0.626 (0.648 pre-fix) — both kept.
 - energy_100g uses sqrt, NOT the PRD's suggested log1p: measured skew
   0.91 -> -1.93 with log1p (overshoot) vs 0.91 -> -0.17 with sqrt.
-  sugars_100g uses log1p as planned (1.85 -> 0.56).
+  sugars_100g uses log1p as planned (1.85 -> 0.56). Those numbers were
+  measured before the leak fix, on the fully-filled Stage 2 frame; the
+  same run prints now (NaNs retained, pandas skips them): energy
+  0.83 -> -0.07 sqrt, sugars 2.18 -> 0.53 log1p — same conclusion.
 - categories_tags is a comma-joined hierarchy (avg 6.8 tags/row, 5,528
   unique exact combos; the top-50 combos cover only 34% of rows), so it is
   encoded per individual tag, not per exact combo.
@@ -22,9 +26,15 @@ Evidence-backed decisions (full writeup: docs/data_quality_report.md §6):
 - Frequency maps are built in fit() only. Stage 4 fits the pipeline on
   train rows, so encodings are train-only by construction — and unlike
   target encoding they never look at the target at all (PRD 3.3).
+- Group-median imputation lives INSIDE the pipeline (GroupMedianImputer,
+  step "impute"), fit on train rows only. It was moved out of Stage 2
+  (clean.py used to fill nutrient NaNs with group medians computed on the
+  full dataset before the train/test split — test rows were leaking into
+  the values filled into train rows). clean.py now preserves NaNs.
 - Inference robustness (beyond the PRD, needed for Stage 6): missing
-  nutrients -> median imputer, missing text/cats -> filled, unseen
-  brand/tag -> mean training frequency, negatives -> NaN -> impute.
+  nutrients -> GroupMedianImputer (group median -> global train median)
+  then the numeric branch's SimpleImputer, missing text/cats -> filled,
+  unseen brand/tag -> mean training frequency, negatives -> NaN -> impute.
 """
 
 from __future__ import annotations
@@ -43,7 +53,12 @@ from sklearn.preprocessing import FunctionTransformer, StandardScaler
 NUMERIC_COLS = [
     "energy_100g", "fat_100g", "saturated_fat_100g", "carbohydrates_100g",
     "sugars_100g", "fiber_100g", "proteins_100g", "salt_100g",
-]  # sodium_100g dropped: exact 2.5x unit duplicate of salt_100g (corr 0.982)
+]  # sodium_100g dropped: exact 2.5x unit duplicate of salt_100g (corr 0.967)
+
+# All 9 nutrient fields as clean.py defines them (NUMERIC_COLS + the
+# redundant sodium side) — used only for the "all nutrients missing"
+# indicator, where the redundancy is part of the signal.
+NUTRIENT_COLS = NUMERIC_COLS + ["sodium_100g"]
 
 COUNT_COLS = ["additives_n", "ingredients_n", "unknown_ingredients_n"]
 
@@ -83,8 +98,12 @@ class FeatureCreator(BaseEstimator, TransformerMixin):
     """Head step: fill categorical/text NaNs, build combined text, add ratios.
 
     Requires DataFrame input (column selection by name downstream depends
-    on it). Missing nutrients are left for the numeric branch's imputer —
-    only text/categorical NaNs are filled here.
+    on it). Missing nutrients are left for the imputer steps (GroupMedian
+    imputer, then the numeric branch's SimpleImputer) — only text/
+    categorical NaNs are filled here. Missingness indicators are computed
+    ONLY when absent: training rows come from clean.csv which already
+    carries them (captured there before any Stage 2 anomaly NaNs), while
+    inference rows arrive raw from the API with no indicator columns.
     """
 
     def fit(self, X, y=None):
@@ -92,6 +111,29 @@ class FeatureCreator(BaseEstimator, TransformerMixin):
 
     def transform(self, X):
         out = X.copy()
+
+        # --- missingness indicators (computed only if absent) -----------
+        # Must run before anything fills the nutrients/text — these derive
+        # from the CURRENT NaN state. When already present (clean.csv) the
+        # stored values are preserved verbatim, never recomputed.
+        if "fiber_100g_was_missing" not in out.columns and "fiber_100g" in out.columns:
+            out["fiber_100g_was_missing"] = out["fiber_100g"].isna().astype(int)
+        if "sodium_100g_was_missing" not in out.columns and "sodium_100g" in out.columns:
+            out["sodium_100g_was_missing"] = out["sodium_100g"].isna().astype(int)
+        if "text_was_missing" not in out.columns:
+            raw_text = (
+                out[INGREDIENT_TEXT_COL]
+                if INGREDIENT_TEXT_COL in out.columns
+                else pd.Series("", index=out.index)
+            )
+            out["text_was_missing"] = (
+                raw_text.fillna("").astype(str).str.strip().eq("").astype(int)
+            )
+        if "nutrients_all_missing" not in out.columns:
+            present = [c for c in NUTRIENT_COLS if c in out.columns]
+            if present:
+                out["nutrients_all_missing"] = out[present].isna().all(axis=1).astype(int)
+
         if BRAND_COL in out.columns:
             out[BRAND_COL] = out[BRAND_COL].fillna("unknown")
         if CATEGORY_COL in out.columns:
@@ -238,6 +280,91 @@ class CategoryTagFrequencyEncoder(BaseEstimator, TransformerMixin):
         return np.asarray([f"{c}_tagfreq" for c in cols], dtype=object)
 
 
+class GroupMedianImputer(BaseEstimator, TransformerMixin):
+    """Train-time group-median imputation (moved from Stage 2 for leak fix).
+
+    fit() computes, per column, medians within each categories_tags group
+    plus a global median fallback — fitted on whatever rows the pipeline is
+    fit on (train only). transform() fills NaNs group-first, then global.
+    Unseen group at inference -> global train median.
+    """
+
+    def __init__(self, columns=None, group_col=CATEGORY_COL):
+        # kept unmodified for sklearn.clone — no list()/dict() copies here
+        self.columns = columns
+        self.group_col = group_col
+
+    @staticmethod
+    def _group_keys(X, group_col):
+        """Group labels with NaN -> "unknown" (FeatureCreator fills them,
+        but a raw frame may still carry one)."""
+        keys = X[group_col]
+        return keys.astype(object).where(keys.notna(), "unknown")
+
+    def fit(self, X, y=None):
+        cols = list(X.columns) if self.columns is None else list(self.columns)
+        # tolerate a frame missing an optional column (defensive only)
+        self.columns_ = [c for c in cols if c in X.columns]
+        use_group = (
+            self.group_col is not None
+            and self.group_col in X.columns
+            and self.group_col not in self.columns_
+        )
+        keys = self._group_keys(X, self.group_col) if use_group else None
+
+        self.global_medians_ = {}
+        self.group_medians_ = {}
+        for c in self.columns_:
+            s = X[c]
+            # all-NaN column -> global median is NaN on purpose: leave it
+            # for the downstream SimpleImputer(keep_empty_features=True).
+            self.global_medians_[c] = s.median()
+            if keys is None:
+                self.group_medians_[c] = {}
+            else:
+                # groups with no observed value for c are absent from the
+                # dict -> map yields NaN -> transform falls back to global
+                self.group_medians_[c] = s.groupby(keys).median().to_dict()
+        return self
+
+    def transform(self, X, y=None):
+        out = X.copy()
+        if not hasattr(self, "columns_"):
+            raise RuntimeError("GroupMedianImputer.transform called before fit")
+        use_group = bool(self.group_medians_) and any(
+            bool(m) for m in self.group_medians_.values()
+        )
+        keys = (
+            self._group_keys(X, self.group_col)
+            if use_group and self.group_col in X.columns
+            else None
+        )
+        for c in self.columns_:
+            if c not in out.columns:
+                continue
+            na_mask = out[c].isna().to_numpy()
+            if not na_mask.any():
+                # no-op: never-missing column keeps its values AND dtype
+                continue
+            # work positionally (numpy) so duplicate/odd indexes can't
+            # produce an alignment blow-up in fillna(Series)
+            vals = out[c].to_numpy(dtype=float, copy=True)
+            if keys is not None and self.group_medians_.get(c):
+                group_vals = keys.map(self.group_medians_[c]).to_numpy(dtype=float)
+                use = na_mask & ~np.isnan(group_vals)
+                vals[use] = group_vals[use]
+            # group median missing (unseen group / no observed values in
+            # that group) -> global train median; all-NaN column -> global
+            # is NaN -> left for the downstream SimpleImputer
+            vals[np.isnan(vals)] = self.global_medians_[c]
+            out[c] = pd.Series(vals, index=out.index, name=c)
+        return out
+
+    def get_feature_names_out(self, input_features=None):
+        # one-to-one: same columns in, same columns out
+        return np.asarray(input_features, dtype=object)
+
+
 def _build_text_branch(n_components, max_features, min_df, max_df) -> Pipeline:
     return Pipeline([
         ("flatten", FunctionTransformer(
@@ -295,6 +422,11 @@ def build_feature_pipeline(
 
     return Pipeline([
         ("create", FeatureCreator()),
+        # impute AFTER create (needs the ratio columns + filled categories
+        # it produces) and BEFORE skew (impute-then-skew, same order at
+        # fit and inference). fit() sees only the rows the pipeline is fit
+        # on -> train-only medians (the Stage 2 leak fix).
+        ("impute", GroupMedianImputer(NUMERIC_FEATURE_COLS)),
         ("skew", SkewCorrect()),
         ("features", ColumnTransformer(transformers, remainder="drop")),
     ])
@@ -313,6 +445,18 @@ def run_diagnostics(
     """
     df = pd.read_csv(csv_path)
     evidence: dict = {}
+
+    print("=" * 70)
+    print("NaNs in input: per-column null counts "
+          "(imputed at train time by GroupMedianImputer)")
+    nulls = df.isna().sum()
+    nulls = nulls[nulls > 0]
+    if len(nulls):
+        for col, n in nulls.items():
+            print(f"  {col:28s} {int(n):>7d} ({100 * n / len(df):.1f}%)")
+    else:
+        print("  none")
+    evidence["nan_counts"] = {c: int(n) for c, n in nulls.items()}
 
     print("=" * 70)
     print("3.4 SKEW CORRECTION EVIDENCE (before -> after)")
@@ -350,7 +494,12 @@ def run_diagnostics(
 
     print("=" * 70)
     print("3.8 PCA ON THE SCALED NUTRIENT BLOCK (analysis only, not in pipeline)")
-    scaled = StandardScaler().fit_transform(df[NUMERIC_COLS])
+    # Evidence print only, NOT model input: clean.csv now (correctly)
+    # retains NaNs, and StandardScaler can't take them. Median-fill here
+    # just so the printout runs — the model path is the pipeline's
+    # GroupMedianImputer + SimpleImputer, fit on train rows.
+    pca_block = df[NUMERIC_COLS].fillna(df[NUMERIC_COLS].median())
+    scaled = StandardScaler().fit_transform(pca_block)
     pca = PCA().fit(scaled)
     evr = pca.explained_variance_ratio_
     loadings = dict(zip(NUMERIC_COLS, np.round(pca.components_[0], 3)))

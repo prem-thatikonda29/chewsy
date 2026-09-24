@@ -208,7 +208,8 @@ is retired; `fetch_training_set.py` replaces it.
   null in live testing at 1500/class; at 5000/class the deeper pages
   are a bit better documented — see null % report from `clean.py`) —
   this is normal OFF sparsity, not a fetch bug; Stage 2's conditional
-  imputation already accounts for it.
+  imputation (now the Stage 3 pipeline's `GroupMedianImputer`) already
+  accounts for it.
   ✅ Observed at 20k: `unknown_ingredients_n` 69%, `additives_n` 70%,
   `fiber_100g` 53% null — matches expectation.
 - [x] 1.3 India stays a **live-demo talking point only**, not a training
@@ -251,6 +252,10 @@ verify before trusting.
   ✅ Group median → global median → 0 fallback ladder; indicators added for
   `fiber_100g`, `sodium_100g`, plus analysis-driven `text_was_missing` and
   `nutrients_all_missing` (17% of rows report no nutrient at all).
+  **Deviation (25 Sep 2026):** imputation moved to Stage 3's pipeline
+  (`GroupMedianImputer`, fit on train-only) — pre-split leakage fix;
+  `clean.py` now preserves these NaNs; indicators unchanged (row-local,
+  computed before any fill). See 2.6 deviation note.
 - [x] 2.4 Normalize the text feature (currently named
   `ingredients_pseudo_text` — built by `fetch_training_set.py` from
   `ingredients_tags`): lowercase, strip punctuation noise, collapse
@@ -270,12 +275,31 @@ verify before trusting.
   the PRD's rationale as an actual comment.
 - [x] 2.6 Save output to `data/processed/openfoodfacts_clean.csv`,
   `dvc add` it.
-  ✅ 19,998 rows × 22 cols, zero nulls at write time, DVC-tracked.
+  ✅ 19,998 rows × 22 cols, DVC-tracked.
+  **Deviation (25 Sep 2026, leak fix):** the earlier "zero nulls at write"
+  came from group-median imputation run on the *full* frame before the
+  train/test split — pre-split leakage. `clean.py` is now row-local only
+  and writes **45,453 nutrient nulls through on purpose**; imputation
+  lives in the Stage 3 pipeline (`GroupMedianImputer`, fit on train rows
+  only). Verified after the change: shape 19,998 × 22 unchanged, balance
+  {1:5000, 2:4998, 3:5000, 4:5000} unchanged, indicators unchanged
+  (fiber 10,501 / sodium 4,388 ones), leakage assert passes,
+  `dvc status` up to date, final matrix still 0 non-finite.
+  Full table: `docs/data_quality_report.md` §7 (local-only).
 - [x] 2.7 Commit: `feat: data cleaning pipeline (clean.py)`.
 
 ### Stage 3 — Feature Engineering
 **Goal:** every technique here should map to a phase in the course mindmap
 and have a one-sentence "why this, not the obvious alternative" ready.
+
+**Leak-fix addition (25 Sep 2026):** `GroupMedianImputer` (per-`categories_tags`
+median → global-median fallback → `SimpleImputer` safety net) now sits between
+the `create` and `skew` steps of the pipeline; `fit()` learns those medians on
+whatever rows the pipeline is fit on — Stage 4 fits on train rows only, so no
+held-out row ever contributes to its own filled value. At inference, an unseen
+category group falls back to the global **train** median. Justification for
+group medians is unchanged from 2.3 (a snack's missing fiber comes from other
+snacks).
 
 - [x] 3.1 Nutrient ratio features: `sugar_fiber_ratio`, `sat_fat_fat_ratio`.
   Justify: raw grams alone don't capture *proportion*, which is the
@@ -299,8 +323,11 @@ and have a one-sentence "why this, not the obvious alternative" ready.
 - [x] 3.4 Skew correction: log-transform `energy_100g`, `sugars_100g` (check
   skewness before/after with a quick `.skew()` printout as evidence).
   ✅ Printout in `python src/features.py`. Evidence-driven amendment:
-  log1p **overshoots** energy (0.909 → −1.934) so energy uses sqrt
-  (0.909 → −0.173); sugars uses log1p as written (1.851 → 0.559).
+  log1p **overshoots** energy so energy uses sqrt; sugars uses log1p as
+  written. Current (NaN-preserving CSV) measurements: energy **+0.825 →
+  −0.067 (sqrt)**, sugars **+2.179 → +0.533 (log1p)** (pre-fix
+  measurements on the imputed CSV: 0.909 → −0.173 / 1.851 → 0.559;
+  log1p on energy overshot to −1.934, which is why sqrt was chosen).
 - [x] 3.5 **Filter-based selection on the numeric nutrient block** — before
   anything else touches these columns: drop any near-zero-variance
   column (`VarianceThreshold`), and check pairwise correlation between
@@ -309,11 +336,13 @@ and have a one-sentence "why this, not the obvious alternative" ready.
   filter-method phase from the mindmap; it's cheap and it's the one
   selection family this project would otherwise skip entirely.
   ✅ `VarianceThreshold(1e-4)` runs first in the numeric branch (before
-  scaling): 0 drops (min variance 10.18 — all nutrients genuinely vary).
-  Correlation check: the PRD-suggested fat vs saturated_fat = **0.648**
-  → keep both; the real redundancy was **salt vs sodium = 0.982** with an
-  exact 2.5× unit relation → `sodium_100g` dropped. energy vs fat 0.870
-  kept (component relation, below threshold).
+  scaling): 0 drops (variances 26.96–63,040.55 — fiber 26.96 is the
+  minimum, all nutrients genuinely vary; pre-fix minimum was 10.18).
+  Correlation check: the PRD-suggested fat vs saturated_fat = **0.626**
+  → keep both; the real redundancy was **salt vs sodium = 0.967** with an
+  exact 2.5× unit relation → `sodium_100g` dropped. No kept pair ≥ 0.9.
+  (Pre-fix measurements: fat/sat-fat 0.648, salt/sodium 0.982 — same
+  decisions.)
 - [x] 3.6 **Scale the numeric nutrient block** (`StandardScaler`) inside the
   `ColumnTransformer`'s numeric branch — **required**, not optional, for
   two separate reasons: (a) the Logistic Regression baseline in Stage 4
@@ -323,8 +352,10 @@ and have a one-sentence "why this, not the obvious alternative" ready.
   — an unscaled PCA would just rediscover "whichever column has the
   biggest numbers," not a genuine energy-density axis. Scale *before* PCA,
   same transformer branch.
-  ✅ Numeric branch = imputer → VarianceThreshold → StandardScaler; PCA
-  diagnostics scale the same block separately.
+  ✅ Numeric branch = median imputer → VarianceThreshold →
+  StandardScaler, sitting behind the pipeline-head `GroupMedianImputer`
+  (see the leak-fix note above); PCA diagnostics scale the same block
+  separately.
 - [x] 3.7 TF-IDF on the ingredient text column
   (`ingredients_pseudo_text`, or `ingredients_text` if a future fetch
   variant provides raw text) (uni+bigrams, `max_features` capped
@@ -344,11 +375,13 @@ and have a one-sentence "why this, not the obvious alternative" ready.
     (likely an "energy density" axis) — this is your direct parallel to
     the mock-test PCA example.
   ✅ SVD: 25 components in the pipeline, 48.3% cumulative EVR (diffuse —
-  ingredient vocabulary is spread across many terms). PCA (analysis only):
-  PC1 = **32.9%**; loadings fat +0.557 / sat-fat +0.495 / energy +0.454
-  vs carbs −0.325 / sugars −0.320 → PC1 is a **fat-energy-density vs
-  sugar-carbohydrate axis** (PRD's "energy density" guess, but with the
-  fat/sugar contrast made explicit). PCA deliberately NOT in the
+  ingredient vocabulary is spread across many terms; unchanged by the
+  leak fix). PCA (analysis only): PC1 = **30.9%**; loadings fat +0.587 /
+  sat-fat +0.510 / energy +0.506 vs carbs −0.244 / sugars −0.236 → PC1
+  is still a **fat-energy-density vs sugar-carbohydrate axis** (PRD's
+  "energy density" guess, but with the fat/sugar contrast made explicit;
+  pre-fix: PC1 32.9%, fat +0.557 / sat-fat +0.495 / energy +0.454 vs
+  carbs −0.325 / sugars −0.320). PCA deliberately NOT in the
   pipeline: Stage 4 SHAP must explain real nutrients, not components.
 - [x] 3.9 Assemble everything into one `sklearn.Pipeline` +
   `ColumnTransformer` (numeric branch, categorical/frequency branch, text
@@ -357,14 +390,18 @@ and have a one-sentence "why this, not the obvious alternative" ready.
   exact `FeatureCreator` pickling bug the mindmap calls out; avoid it now.
   ✅ `build_feature_pipeline(include_text=, include_categorical=)` —
   3 branches, all custom classes module-level in `src/features.py`.
-  Flags exist for Stage 4's three runs. Final matrix: **19,998 × 44**
+  Head steps in order: `create` → `impute` (`GroupMedianImputer`) →
+  `skew` → `ColumnTransformer`. Flags exist for Stage 4's three runs.
+  Final matrix: **19,998 × 44**
   (17 numeric + 1 brand + 1 category + 25 SVD), 0 non-finite values.
 - [x] 3.10 Unit test: `tests/test_features.py` — pipeline `.fit_transform()`
   runs on a small sample without error and produces the expected shape.
-  ✅ 11 tests pass: both shapes (numeric-only/full), ratio math, both
+  ✅ 20 tests pass: both shapes (numeric-only/full), ratio math, both
   encoders incl. unseen-value fallbacks, NaN/negative/unseen inference
   input, joblib round-trip (Stage 5 pickle guard), feature names (SHAP),
-  diagnostics evidence keys.
+  diagnostics evidence keys, plus the leak-fix additions (`GroupMedianImputer`
+  unit tests, shared-group NaN pipeline test, indicator
+  compute/preserve tests).
 - [x] 3.11 Commit: `feat: feature engineering pipeline`.
 
 ### Stage 4 — Modeling & Experiment Tracking
@@ -379,9 +416,13 @@ from `src/features.py` (output = 44 cols for the full config):
 - Run 3 (4.4) = both `True` (defaults) → full feature set.
 Feature names for the SHAP plot:
 `pipeline.named_steps["features"].get_feature_names_out()`.
+The pipeline includes `GroupMedianImputer` fit on train only, which
+completes the "every learned statistic is fit on train" story — group
+medians, frequency maps, scaler stats and TF-IDF idfs all come from the
+training fold (Q&A: leakage question).
 PCA deliberately has **no** features here (SHAP must explain real
 nutrients; see 3.8) — but the PC1 finding (fat-density vs sugar-density,
-32.9%) is presentation material (docs report §6, local-only file).
+30.9%) is presentation material (docs report §6, local-only file).
 
 - [ ] 4.1 Set `mlflow.set_tracking_uri("sqlite:///mlflow.db")`.
 - [ ] 4.2 **Run 1 (baseline):** nutrients + ratios only, no text — Logistic
@@ -419,13 +460,25 @@ them; run tests from the repo root (root `conftest.py` puts it on
 **Stage 2/3 handoff — the feature row the API sends:**
 - Input to the fitted pipeline is a **one-row `pd.DataFrame`** with the
   columns `fetch_training_set.py` keeps (the cleaned input space).
-- The pipeline is inference-robust *inside* (median imputer for missing
-  nutrients, empty text → `""`, unseen brand/tag → mean training
+- Live rows may now contain nutrient **NaNs** (that is what the
+  NaN-preserving clean CSV ships, so inference looks like training): the
+  pipeline fills them with **group medians** — same `GroupMedianImputer`
+  logic used at training time — then the safety-net median imputer in the
+  numeric branch. Unseen category group → global **train** median.
+- The API does **not** need to provide the indicator columns
+  (`*_was_missing`, `text_was_missing`, `nutrients_all_missing`) —
+  `FeatureCreator` computes them when absent, straight from the raw
+  missingness of the incoming row (training rows already carry them from
+  `clean.csv` and those stored values are preserved).
+- The pipeline is inference-robust *inside* (empty text → `""`, unseen
+  brand/tag → mean training
   frequency, negative nutrients → NaN → impute) — but it does **not**
   re-run Stage 2's field normalizations. The API must apply the same
   normalizations to the raw OFF response first: parse list-repr brands
   (`['X']` → `X`, lowercase), cap mass values at 100 g, negatives →
-  NaN, HTML-unescape names. Consider exposing a shared helper from
+  NaN, HTML-unescape names. NaN is now handled *inside* the pipeline, so
+  normalization only has to make the row's fields the right *shape*, not
+  fill values. Consider exposing a shared helper from
   `src/clean.py` rather than duplicating the logic (Hard rule: one
   source of truth).
 - `nova_group` from the OFF response must never enter that frame
@@ -560,7 +613,11 @@ sequence of scripts you happened to run in order.
 **Stage 2/3 handoff:** `training_reference.csv` should snapshot the
 **input** space — the 22 cleaned columns (what a live API row looks like
 after Stage 2 normalization), not the 44 transformed features — drift is
-about what *arrives*, and live rows start in that space too.
+about what *arrives*, and live rows start in that space too. It is built
+from the **NaN-preserving** clean CSV, so the KS comparison should also
+compare per-column **null fractions** (a documentation-drift signal is a
+null-rate change: OFF pages that stop recording fiber show up as a rising
+`fiber_100g` NaN share before any value distribution moves).
 - [ ] 12.1 At minimum: structured request logging in FastAPI (barcode,
   latency, predicted class) and a working `/metrics` endpoint.
 - [ ] 12.2 If time allows: a small script comparing live-fetched nutrient

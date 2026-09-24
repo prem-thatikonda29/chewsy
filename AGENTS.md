@@ -178,18 +178,25 @@ and cut order are in PRD §3 and Hard rule 6.
 ## As-built interfaces (Stages 0–3, as of 25 Sep 2026)
 
 - **Data:** `data/processed/openfoodfacts_clean.csv` — 19,998 × 22,
-  DVC-tracked, 0 nulls at write, classes {1:5000, 2:4998, 3:5000,
-  4:5000}. The bulk TSV was deleted from disk — nothing references it.
+  DVC-tracked; nutrient NaNs are **retained on purpose** (45,453 nulls)
+  and imputed at train time by `GroupMedianImputer` inside the Stage 3
+  pipeline (moved out of Stage 2 to fix pre-split leakage — see PRD 2.6
+  notes / `docs/data_quality_report.md` §7), classes {1:5000, 2:4998,
+  3:5000, 4:5000}. The bulk TSV was deleted from disk — nothing references it.
 - **Feature pipeline:** `src/features.py::build_feature_pipeline(
   include_text=True, include_categorical=True, n_svd_components=25, ...)`
-  → 44 columns (17 numeric + brand freq + tag freq + 25 SVD). Input must
+  → 44 columns (17 numeric + brand freq + tag freq + 25 SVD). Head steps
+  in order: `create` → `impute` (`GroupMedianImputer`, train-fit) →
+  `skew` → `ColumnTransformer`. Input must
   be a **DataFrame** with the cleaned column names. Stage 4 runs:
   Run 1 = both flags False; Run 2 = text only; Run 3 = defaults.
-- **Inference-robust inside** (median imputer, NaN text → `""`, unseen
-  brand/tag → mean training frequency, negatives → impute) but it does
-  NOT re-run Stage 2 field normalization — Stage 6 must normalize the
-  raw OFF response (brand parse, mass cap, HTML unescape) first; see the
-  Stage 6 handoff note in the PRD.
+- **Inference-robust inside** (`GroupMedianImputer` group→global median,
+  median imputer, NaN text → `""`, unseen brand/tag → mean training
+  frequency, negatives → impute, `*_was_missing` indicators computed
+  when absent from the input row) but it does NOT re-run Stage 2 field
+  normalization — Stage 6 must normalize the raw OFF response (brand
+  parse, mass cap, HTML unescape) first; see the Stage 6 handoff note in
+  the PRD.
 - **PCA is analysis-only** (SHAP must explain real nutrients); SVD lives
   in the text branch. `get_feature_names_out()` gives SHAP labels.
 - **Evidence:** `python src/features.py` prints skew/filter/PCA/SVD

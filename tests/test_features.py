@@ -6,9 +6,12 @@ import pandas as pd
 import pytest
 
 from src.features import (
+    INDICATOR_COLS,
+    NUTRIENT_COLS,
     CategoryTagFrequencyEncoder,
     FeatureCreator,
     FrequencyEncoder,
+    GroupMedianImputer,
     NUMERIC_FEATURE_COLS,
     build_feature_pipeline,
     run_diagnostics,
@@ -97,6 +100,94 @@ class TestFeatureCreator:
         assert out["text_all"].iloc[0] == ""
 
 
+    def test_computes_indicator_columns_when_absent(self):
+        """Raw API rows have no `*_was_missing` columns: derive them from
+        the current NaN state, before anything fills the nutrients."""
+        df = make_sample(n=4).drop(columns=list(INDICATOR_COLS))
+        df.loc[0, "fiber_100g"] = np.nan
+        df.loc[1, "sodium_100g"] = np.nan
+        df.loc[2, "ingredients_pseudo_text"] = "   "
+        df.loc[3, list(NUTRIENT_COLS)] = np.nan
+        out = FeatureCreator().fit_transform(df)
+        assert out["fiber_100g_was_missing"].tolist() == [1, 0, 0, 1]
+        assert out["sodium_100g_was_missing"].tolist() == [0, 1, 0, 1]
+        assert out["text_was_missing"].tolist() == [0, 0, 1, 0]
+        assert out["nutrients_all_missing"].tolist() == [0, 0, 0, 1]
+
+    def test_preserves_indicator_columns_when_present(self):
+        """Training rows come from clean.csv with the indicators already
+        captured there — they must survive verbatim, never be recomputed."""
+        df = make_sample(n=4)
+        for col in INDICATOR_COLS:
+            df[col] = 7
+        out = FeatureCreator().fit_transform(df)
+        for col in INDICATOR_COLS:
+            assert (out[col] == 7).all(), f"{col} was recomputed"
+
+
+class TestGroupMedianImputer:
+    def test_fills_from_group_median_only(self):
+        """NaN in a group with observed [10, 12] -> 11; a different group's
+        much larger values must not influence it."""
+        df = pd.DataFrame({
+            "categories_tags": ["g1", "g1", "g1", "g2"],
+            "col_a": [10.0, 12.0, np.nan, 100.0],
+        })
+        out = GroupMedianImputer(["col_a"]).fit_transform(df)
+        assert out["col_a"].iloc[2] == pytest.approx(11.0)
+        # observed values untouched
+        np.testing.assert_allclose(
+            out["col_a"].to_numpy(), [10.0, 12.0, 11.0, 100.0]
+        )
+
+    def test_unseen_group_at_transform_uses_global_train_median(self):
+        fit_df = pd.DataFrame({
+            "categories_tags": ["g1", "g1", "g2", "g2"],
+            "col_a": [10.0, 12.0, 100.0, 200.0],
+        })
+        imp = GroupMedianImputer(["col_a"]).fit(fit_df)
+        # global train median = median(10, 12, 100, 200) = 56.0
+        new = pd.DataFrame({"categories_tags": ["g3"], "col_a": [np.nan]})
+        out = imp.transform(new)
+        assert out["col_a"].iloc[0] == pytest.approx(56.0)
+
+    def test_group_with_no_observed_values_falls_back_to_global(self):
+        df = pd.DataFrame({
+            "categories_tags": ["g1", "g1", "g2", "g2"],
+            "col_a": [10.0, 12.0, np.nan, np.nan],
+        })
+        out = GroupMedianImputer(["col_a"]).fit_transform(df)
+        # g2 has no observed value for col_a -> global median = 11.0
+        assert out["col_a"].iloc[2] == pytest.approx(11.0)
+        assert out["col_a"].iloc[3] == pytest.approx(11.0)
+
+    def test_all_nan_column_left_for_downstream_simple_imputer(self):
+        df = pd.DataFrame({
+            "categories_tags": ["g1", "g2"],
+            "col_a": [np.nan, np.nan],
+        })
+        out = GroupMedianImputer(["col_a"]).fit_transform(df)
+        # global median of an all-NaN column is NaN -> SimpleImputer's job
+        assert out["col_a"].isna().all()
+
+    def test_never_missing_column_is_a_noop(self):
+        df = pd.DataFrame({
+            "categories_tags": ["g1", "g2"],
+            "col_a": [1.0, 2.0],
+            "col_b": [3, 4],
+        })
+        out = GroupMedianImputer(["col_a", "col_b"]).fit_transform(df)
+        np.testing.assert_allclose(out["col_a"].to_numpy(), [1.0, 2.0])
+        np.testing.assert_allclose(out["col_b"].to_numpy(), [3, 4])
+
+    def test_get_feature_names_out_is_one_to_one(self):
+        cols = ["col_a", "col_b"]
+        names = GroupMedianImputer(cols).fit(
+            pd.DataFrame({"categories_tags": ["g1"], "col_a": [1.0], "col_b": [2.0]})
+        ).get_feature_names_out(cols)
+        assert list(names) == cols
+
+
 class TestFrequencyEncoders:
     def test_brand_frequencies_and_unseen_fallback(self):
         df = pd.DataFrame({"brands": ["a", "a", "a", "b"]})
@@ -159,6 +250,24 @@ class TestPipeline:
         pipe = small_pipeline()
         Z = pipe.fit_transform(df)
         assert np.isfinite(Z).all()
+
+    def test_group_median_imputer_makes_shared_group_nans_finite(self):
+        """Nutrient NaNs concentrated in one categories_tags group: the
+        GroupMedianImputer step (not just the global fallback) must turn
+        them into a finite matrix."""
+        df = make_sample(n=40)
+        shared = df["categories_tags"].iloc[0]
+        idx = df.index[df["categories_tags"] == shared][:6]
+        df.loc[idx, "fiber_100g"] = np.nan
+        df.loc[idx[:3], "energy_100g"] = np.nan
+        df.loc[idx[3], "sugars_100g"] = np.nan
+        pipe = small_pipeline()
+        Z = pipe.fit_transform(df)
+        assert np.isfinite(Z).all()
+        # the step is really in the pipeline and was fit on these rows
+        imputer = pipe.named_steps["impute"]
+        assert "en:" in str(set(imputer.group_medians_["fiber_100g"]))
+        assert np.isfinite(imputer.global_medians_["fiber_100g"])
 
     def test_joblib_roundtrip_reproduces_transform(self):
         """Guards the Stage 5 'can't get attribute FeatureCreator' bug."""

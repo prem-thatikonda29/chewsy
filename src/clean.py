@@ -6,8 +6,16 @@ Stage 2 -- Data Verification & Cleaning.
 Loads the raw live-API training pull, prints a diagnostic report (PRD 2.1
 checklist plus independent consistency analysis: macro-sum sanity,
 energy-vs-Atwater cross-check, near-duplicate names, brand/text hygiene),
-applies a documented drop/cap/impute decision to every flagged anomaly,
+applies a documented drop/cap decision to every flagged anomaly,
 and writes data/processed/openfoodfacts_clean.csv for DVC tracking.
+
+Stage 2 is deliberately ROW-LOCAL ONLY. Group-median imputation of nutrient
+columns was REMOVED from here (it used to run on the full dataset before any
+train/test split -- a train/test leakage: test rows influenced the medians
+filled into train rows). All learned imputation now lives inside the sklearn
+pipeline in src/features.py (GroupMedianImputer), fit on train rows only.
+This script therefore INTENTIONALLY retains NaNs in nutrient columns; the
+`*_was_missing` indicator columns still record the original missingness.
 
 Usage:
     python src/clean.py
@@ -145,7 +153,8 @@ def report(df: pd.DataFrame) -> None:
 
     all_missing = int(df[NUTRIENT_COLS].isna().all(axis=1).sum())
     print(f"  rows with ALL nutrients null   : {all_missing} "
-          f"(no nutrient report at all -- see decision in clean())")
+          f"(no nutrient report at all -- rows kept + flagged via "
+          f"nutrients_all_missing; NaNs retained, see clean())")
 
     brands = df["brands"].fillna("")
     print(f"  brands stored as list-repr ['X'] : {int(brands.str.startswith('[').sum())} rows")
@@ -156,9 +165,12 @@ def report(df: pd.DataFrame) -> None:
         f"{int(df['product_name'].fillna('').str.contains(r'&[a-z]+;|&#\\d+;').sum())} rows"
     )
     print(
-        "\n  decisions -> negatives: NaN+impute | >100g: cap at 100 | "
-        "energy bad: NaN+impute | sat>fat: NaN+impute | dup code: drop keep-first | "
-        "near-dup names: keep | brands: un-list + lowercase"
+        "\n  decisions -> negatives: NaN (imputed at train time) | >100g: cap at 100 | "
+        "energy bad: NaN (imputed at train time) | sat>fat: NaN (imputed at "
+        "train time) | dup code: drop keep-first | "
+        "near-dup names: keep | brands: un-list + lowercase | "
+        "NO group-median fill here -- NaNs are preserved for the Stage 3 "
+        "GroupMedianImputer (fit on train rows only)"
     )
     print()
 
@@ -184,8 +196,9 @@ def clean(df: pd.DataFrame) -> pd.DataFrame:
     # Analysis-driven: ~17% of rows report NO nutrient at all (class-skewed,
     # NOVA 4 the least represented). Decision: KEEP the rows (they still carry
     # ingredients/brand text and a valid label) but flag them: every nutrient
-    # on such a row is a group median, i.e. synthetic, and the model should be
-    # able to tell a measured value from an imputed one. Also explains why
+    # on such a row is filled at train time (group median -> global median ->
+    # SimpleImputer zero), i.e. synthetic, and the model should be able to
+    # tell a measured value from an imputed one. Also explains why
     # post-imputation macro sums can exceed 100 -- the per-column medians are
     # drawn independently, so their sum is not constrained to <= 100.
     df["nutrients_all_missing"] = df[NUTRIENT_COLS].isna().all(axis=1).astype(int)
@@ -217,11 +230,11 @@ def clean(df: pd.DataFrame) -> pd.DataFrame:
     # --- documented anomaly decisions (PRD 2.1) -------------------------
     # Negative mass is physically impossible (OFF data-entry / sign error):
     # decision = set to NaN so it flows into the normal imputation path
-    # rather than poisoning medians with a bogus -1.
+    # at train time rather than poisoning medians with a bogus -1.
     for col in MASS_COLS:
         n_neg = int((df[col] < 0).sum())
         if n_neg:
-            print(f"{col}: {n_neg} negative value(s) -> NaN (impute below)")
+            print(f"{col}: {n_neg} negative value(s) -> NaN (kept NaN; imputed at train time)")
             df.loc[df[col] < 0, col] = np.nan
 
     # Mass-basis value above 100 g/100g: decision = CAP at 100, not drop.
@@ -236,64 +249,54 @@ def clean(df: pd.DataFrame) -> pd.DataFrame:
             df.loc[df[col] > 100, col] = 100.0
 
     # Energy above ~900 kcal/100g exceeds the physical maximum for any food
-    # (pure fat): decision = NaN + impute, same rationale as negatives.
+    # (pure fat): decision = NaN (kept NaN; imputed at train time), same
+    # rationale as negatives.
     n_hot = int((df[ENERGY_COL] > MAX_ENERGY_KCAL).sum())
     if n_hot:
-        print(f"{ENERGY_COL}: {n_hot} value(s) > {MAX_ENERGY_KCAL:.0f} kcal -> NaN (impute)")
+        print(f"{ENERGY_COL}: {n_hot} value(s) > {MAX_ENERGY_KCAL:.0f} kcal -> NaN (kept NaN; imputed at train time)")
         df.loc[df[ENERGY_COL] > MAX_ENERGY_KCAL, ENERGY_COL] = np.nan
 
-    # saturated fat cannot exceed total fat: decision = NaN + impute the
-    # sat-fat side only (fat_100g itself is the more trustworthy field).
+    # saturated fat cannot exceed total fat: decision = NaN the sat-fat side
+    # only (fat_100g itself is the more trustworthy field) -- a single-cell,
+    # row-local fix. The NaN is left in place for train-time imputation.
     bad = (df["saturated_fat_100g"] > df["fat_100g"]) & df["saturated_fat_100g"].notna()
     if bad.any():
-        print(f"saturated_fat_100g: {int(bad.sum())} row(s) > fat_100g -> NaN (impute)")
+        print(f"saturated_fat_100g: {int(bad.sum())} row(s) > fat_100g -> NaN (kept NaN; imputed at train time)")
         df.loc[bad, "saturated_fat_100g"] = np.nan
 
     # --- energy cross-consistency (analysis-driven) ---------------------
     # Rule 1: energy_100g == 0 while macros imply >= 20 kcal (e.g. a row
     # with 66.8 g carbs + 12.4 g protein reported 0 kcal) -- energy was
-    # simply never entered. Decision: NaN + impute.
+    # simply never entered. Decision: NaN (imputed at train time).
     est = (
         4 * df["carbohydrates_100g"] + 4 * df["proteins_100g"]
         + 9 * df["fat_100g"] + 2 * df["fiber_100g"].fillna(0)
     )
     dead = (df[ENERGY_COL] == 0) & (est >= 20) & df[ENERGY_COL].notna()
     if dead.any():
-        print(f"{ENERGY_COL}: {int(dead.sum())} zero(s) contradicting macros -> NaN (impute)")
+        print(f"{ENERGY_COL}: {int(dead.sum())} zero(s) contradicting macros -> NaN (kept NaN; imputed at train time)")
         df.loc[dead, ENERGY_COL] = np.nan
     # Rule 2: reported energy vs Atwater estimate outside [0.3, 3.0] --
     # one of the two independently-reported fields is wrong and we cannot
-    # tell which, so neither is trusted. Decision: NaN + impute.
+    # tell which, so neither is trusted. Decision: NaN (imputed at train time).
     ratio = df[ENERGY_COL] / est.replace(0, np.nan)
     wild = df[ENERGY_COL].notna() & ((ratio > ENERGY_RATIO_HI) | (ratio < ENERGY_RATIO_LO))
     if wild.any():
         print(
             f"{ENERGY_COL}: {int(wild.sum())} value(s) inconsistent with macros "
-            f"(ratio outside [{ENERGY_RATIO_LO}, {ENERGY_RATIO_HI}]) -> NaN (impute)"
+            f"(ratio outside [{ENERGY_RATIO_LO}, {ENERGY_RATIO_HI}]) -> NaN "
+            f"(kept NaN; imputed at train time)"
         )
         df.loc[wild, ENERGY_COL] = np.nan
 
-    # --- group-median imputation (PRD 2.3) ------------------------------
-    # Median within the same categories_tags group, not the global median:
-    # a snack's missing fiber should be filled from other snacks, not from
-    # beverages. Fallback ladder when the group can't supply a median
-    # (singleton/empty category strings are common -- only 4133/6000 rows
-    # sit in a category group of size >= 2): group median -> global median.
-    nutrient_cols = [ENERGY_COL] + MASS_COLS
-    for col in nutrient_cols:
-        # only NULLs are touched -- observed values are never overwritten
-        group_median = df.groupby("categories_tags", dropna=False)[col].transform("median")
-        fallback = df[col].median()
-        df[col] = df[col].fillna(group_median).fillna(fallback)
-        still_null = int(df[col].isna().sum())
-        if still_null:
-            # column is null everywhere (or group+global medians both NaN):
-            # last resort = 0 so the matrix stays numeric for Stage 3.
-            print(f"{col}: {still_null} row(s) still null after impute -> 0")
-            df[col] = df[col].fillna(0)
+    # NOTE: no imputation here. Missing nutrient cells are left as NaN on
+    # purpose -- see module docstring. Group-median imputation was moved to
+    # src/features.py::GroupMedianImputer so it is fit on train rows only.
 
-    # Count/int columns: impute with 0 (absence of an additive count reads
+    # Count/int columns: fill with 0 (absence of an additive count reads
     # as "no additives reported" -> same as none) + keep Stage 3 numeric.
+    # Row-local and constant -- no statistics are learned from other rows,
+    # so this is not a leakage source and stays in Stage 2.
     for col in ["additives_n", "ingredients_n", "unknown_ingredients_n"]:
         df[col] = df[col].fillna(0)
 
@@ -332,10 +335,19 @@ def main() -> None:
 
     print("\nPOST-CLEAN SUMMARY:")
     print(f"rows: {len(df)}")
-    print(f"remaining nulls: {int(df.isna().sum().sum())}")
     print("nova_group balance:", df["nova_group"].value_counts().sort_index().to_dict())
     macro_sum = df[MACRO_COLS].sum(axis=1, min_count=1)
     print(f"macro sums > 100: {int((macro_sum > 100).sum())} (rounding slack only)")
+
+    # Honest null accounting: NaNs in nutrient columns are RETAINED here on
+    # purpose. They are imputed at train time by features.GroupMedianImputer
+    # (fit on train rows only) -- never in this Stage 2 pre-split step.
+    print("\nNaNs retained at write (imputed at train time by GroupMedianImputer):")
+    nulls = df.isna().sum()
+    print(f"  {'column':28s} {'nulls':>7s} {'pct':>7s}")
+    for col, n in nulls.items():
+        print(f"  {col:28s} {int(n):>7d} {100 * n / len(df):>6.1f}%")
+    print(f"  {'TOTAL':28s} {int(nulls.sum()):>7d}")
 
     os.makedirs(os.path.dirname(OUT_PATH), exist_ok=True)
     df.to_csv(OUT_PATH, index=False)
