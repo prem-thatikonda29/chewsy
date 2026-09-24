@@ -41,7 +41,7 @@ from __future__ import annotations
 
 import numpy as np
 import pandas as pd
-from sklearn.base import BaseEstimator, TransformerMixin
+from sklearn.base import BaseEstimator, ClassifierMixin, TransformerMixin, clone
 from sklearn.compose import ColumnTransformer
 from sklearn.decomposition import PCA, TruncatedSVD
 from sklearn.feature_extraction.text import TfidfVectorizer
@@ -363,6 +363,36 @@ class GroupMedianImputer(BaseEstimator, TransformerMixin):
     def get_feature_names_out(self, input_features=None):
         # one-to-one: same columns in, same columns out
         return np.asarray(input_features, dtype=object)
+
+
+class NovaLabelAdapter(ClassifierMixin, BaseEstimator):
+    """Remap NOVA labels {1,2,3,4} to the 0-based ids xgboost requires.
+
+    xgboost >= 2 rejects class vectors that aren't [0..n-1]; this wraps a
+    classifier, encodes labels in fit and decodes predictions back to the
+    original NOVA ids — so every trained artifact predicts 1..4.
+
+    Lives in src/features.py (not src/train.py) for the same reason as the
+    transformer classes above: pickle resolves the class by module path,
+    and `python src/train.py` would record it as `__main__.*`, which no
+    fresh process can import (Hard rule 4).
+    """
+
+    def __init__(self, estimator=None):
+        self.estimator = estimator
+
+    def fit(self, X, y):
+        y = np.asarray(y)
+        self.classes_ = np.unique(y)
+        self.estimator_ = clone(self.estimator)
+        self.estimator_.fit(X, np.searchsorted(self.classes_, y))
+        return self
+
+    def predict(self, X):
+        return self.classes_[np.asarray(self.estimator_.predict(X), dtype=int)]
+
+    def predict_proba(self, X):
+        return self.estimator_.predict_proba(X)
 
 
 def _build_text_branch(n_components, max_features, min_df, max_df) -> Pipeline:

@@ -424,21 +424,61 @@ PCA deliberately has **no** features here (SHAP must explain real
 nutrients; see 3.8) — but the PC1 finding (fat-density vs sugar-density,
 30.9%) is presentation material (docs report §6, local-only file).
 
-- [ ] 4.1 Set `mlflow.set_tracking_uri("sqlite:///mlflow.db")`.
-- [ ] 4.2 **Run 1 (baseline):** nutrients + ratios only, no text — Logistic
+- [x] 4.1 Set `mlflow.set_tracking_uri("sqlite:///mlflow.db")`.
+  ✅ Top of `src/train.py`; experiment `chewsy-nova`; `mlflow.db` +
+  `mlruns/` committed (grading evidence, never gitignored).
+- [x] 4.2 **Run 1 (baseline):** nutrients + ratios only, no text — Logistic
   Regression. Log params, accuracy/F1 (macro, since NOVA classes are
   imbalanced), confusion matrix as an artifact.
-- [ ] 4.3 **Run 2:** add TF-IDF + SVD text features — same model family.
+  ✅ `run1_logreg`: macro-F1 **0.7973**, accuracy 0.7980, log-loss 0.5258,
+  confusion-matrix PNG logged. Split: stratified 80/20, `random_state=42`,
+  split *before* any fit (train 15,998 / test 4,000). `class_weight="balanced"`
+  is a near no-op by construction — classes are {1:5000, 2:4998, 3:5000,
+  4:5000} — used anyway for standardness.
+- [x] 4.3 **Run 2:** add TF-IDF + SVD text features — same model family.
   Log the same metrics; this run should meaningfully beat Run 1 or you have
   a genuine, presentable finding either way ("text didn't help as much as
   expected because...").
-- [ ] 4.4 **Run 3:** swap to a tree-based model (Random Forest or XGBoost)
+  ✅ `run2_logreg`: macro-F1 **0.8875** (+0.0902 over run 1) — text helps a
+  lot; ingredient/name text carries real processing signal. Same LR family
+  keeps the ablation delta clean.
+- [x] 4.4 **Run 3:** swap to a tree-based model (Random Forest or XGBoost)
   on the full feature set. Log SHAP summary plot as an artifact.
-- [ ] 4.5 Compare all 3 runs in the MLflow UI, pick the winner by macro-F1
+  ✅ `run3_random_forest` (300 trees, full 44-col set): macro-F1 **0.9415**,
+  log-loss 0.2001. SHAP artifacts: TreeExplainer on 200 fixed-seed train
+  rows, one summary PNG per NOVA class (4), feature names from
+  `get_feature_names_out()`. **Deviation (25 Sep 2026):** SHAP artifacts
+  also logged for runs 4–5 (same code path, TreeExplainer supports both).
+- [x] 4.5 Compare all 3 runs in the MLflow UI, pick the winner by macro-F1
   (accuracy alone is misleading with imbalanced NOVA classes).
-- [ ] 4.6 Register the winner in the Model Registry, alias it `champion`.
+  ✅ **Deviation (25 Sep 2026, approved): 6 runs, not 3** — model diversity
+  added on top of the PRD's feature ablation (xgboost==3.4.1 added to
+  `requirements.txt`). Final ranking by macro-F1:
+  **run5 xgboost 0.9494** > run4 hist_gbdt 0.9442 > run3 random_forest
+  0.9415 > run2 logreg+text 0.8875 > run6 knn 0.8555 > run1 logreg 0.7973.
+  Winner per-class F1: {1: 0.9645, 2: 0.9864, 3: 0.9179, 4: 0.9288} —
+  NOVA 3 (processed foods) is the hard class everywhere. `print_comparison`
+  prints the table; `mlflow ui` shows the same.
+- [x] 4.6 Register the winner in the Model Registry, alias it `champion`.
   **Done when:** `mlflow.pyfunc.load_model` can load it back by alias.
-- [ ] 4.7 Commit: `feat: MLflow tracking + 3 experiments, champion registered`.
+  ✅ `chewsy-nova` v1, alias `champion`, source = `champion_packaging_run5`
+  (refit of the winning config on the same deterministic split);
+  `mlflow.pyfunc.load_model("models:/chewsy-nova@champion")` verified —
+  sample test row predicts NOVA 4 (true 4).
+  **Deviation (25 Sep 2026): champion-only model logging.** PRD 4.2–4.4
+  require params/metrics/plots, not model binaries. mlflow's default skops
+  serialization inflated these pipelines ~5× (78–155 MB/model → 673 MB of
+  `mlruns/` with all six, exceeding GitHub's 100 MB/file limit), so only the
+  champion's model is logged — pickle format, **17 MB**; `mlruns/` = 19 MB
+  total. Also: xgboost ≥ 2 rejects non-0-based class ids, so
+  `NovaLabelAdapter` (in `src/features.py`, Hard rule 4) maps {1,2,3,4} →
+  {0,1,2,3} and decodes predictions back; the logged input example marks
+  indicator/text columns nullable so Stage-6-style rows pass pyfunc schema
+  enforcement; the `code` barcode column is dropped from `X` (identifier,
+  not a feature — uint64 values break signature inference).
+- [x] 4.7 Commit: `feat: MLflow tracking + 3 experiments, champion registered`.
+  ✅ Committed as `feat: MLflow tracking + 6 experiments, champion registered`
+  (message amended to match the approved 6-run matrix).
 
 ### Stage 5 — Packaging
 **Stage 3 handoff:** the feature-stage pickle round-trip already passes
