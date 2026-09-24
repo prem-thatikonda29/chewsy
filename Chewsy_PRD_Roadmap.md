@@ -110,10 +110,11 @@ chewsy/
 │   ├── clean.py                    (Stage 2)
 │   ├── features.py                 (Stage 3 — custom transformers)
 │   ├── train.py                    (Stage 4)
+│   ├── package.py                  (Stage 5 — registry → model.joblib + reference)
 │   └── batch_predict.py             (Stage 6 — offline scoring of a CSV of barcodes)
 ├── models/
-│   ├── model.joblib            (Stage 5, gitignored — DVC/artifact instead)
-│   └── training_reference.csv  (Stage 12 — drift baseline)
+│   ├── model.joblib            (Stage 5, gitignored — DVC-tracked: model.joblib.dvc)
+│   └── training_reference.csv  (Stage 12 — drift baseline, git-committed)
 ├── app/
 │   ├── main.py                 (FastAPI — Stage 6)
 │   ├── off_client.py           (live Open Food Facts API wrapper — Stage 6)
@@ -128,6 +129,8 @@ chewsy/
 │   └── next.config.js
 ├── tests/
 │   ├── test_features.py
+│   ├── test_train.py
+│   ├── test_package.py
 │   └── test_api.py
 ├── Dockerfile                   (Stage 8 — multi-stage: Node build + Python runtime)
 ├── entrypoint.sh                 (Stage 8)
@@ -501,14 +504,61 @@ drops `code` from `X`, so 5.3's `training_reference.csv` should snapshot
 the feature columns without it. Comparison runs in MLflow carry **no**
 model binaries by design (champion-only logging) — don't go looking for
 per-run models; metrics/plots/registry are all committed and sufficient.
-- [ ] 5.1 `joblib.dump()` the full fitted pipeline (features + model) as
-  `models/model.joblib`.
-- [ ] 5.2 Verify it reloads cleanly in a fresh Python process (`joblib.load`
+- [x] 5.1 `joblib.dump()` the full fitted pipeline (features + model) as
+  `models/model.joblib`. — done by **`src/package.py`** (approved
+  deviation: a small packaging script instead of an ad-hoc one-liner, so
+  registry → artifact is reproducible and gradeable: `python src/package.py`).
+  Source is `mlflow.sklearn.load_model("models:/chewsy-nova@champion")`
+  per the Stage 4 handoff (provenance-clean); dump = **17.3 MB**,
+  DVC-tracked (`models/model.joblib.dvc`) and pushed to the HF bucket —
+  git carries the pointer, never the blob (matches the `.gitignore`
+  `models/*.joblib` design).
+- [x] 5.2 Verify it reloads cleanly in a fresh Python process (`joblib.load`
   → `.predict()` on one sample) — this catches the "can't get attribute
   FeatureCreator" bug before it reaches the API.
-- [ ] 5.3 Save `models/training_reference.csv` — a snapshot of the training
+  `tests/test_package.py::test_fresh_process_loads_predicts_and_matches_registry`
+  spawns a brand-new interpreter: load → predict on a reference row →
+  4-class `predict_proba` sanity → **registry-vs-joblib prediction
+  equality** (the packaged artifact *is* the registered champion).
+  Full suite: 31/31 green.
+- [x] 5.3 Save `models/training_reference.csv` — a snapshot of the training
   feature distributions, needed for Stage 12 drift checks.
-- [ ] 5.4 Commit: `feat: packaged model artifact`.
+  Built by `src/package.py` from `load_dataset()`'s column selection:
+  **19,998 × 20**, git-committed, NaN-preserving. "20" reconciles the two
+  handoffs: Stage 4's "feature columns without `code`" + Stage 12's "live
+  input space" both mean the 22 cleaned columns minus `code` (barcode id)
+  and `nova_group` (target — Hard rule 11: a live row never carries it).
+- [x] 5.4 Commit: `feat: packaged model artifact`.
+
+**DVC remote on HuggingFace (approved deviation, 25 Sep 2026):** until
+this stage there was **no DVC remote at all** — `dvc push`/`dvc pull`
+were impossible and every clone was stranded without the CSVs/model.
+Setup (HF's documented "Version data with DVC" recipe):
+- default remote `.dvc/config` (committed, no secrets):
+  `url = s3://chewsy-dvc/dvc-store`, `endpointurl = https://s3.hf.co/prem2903`,
+  `region = us-east-1` → a private HF Storage Bucket under our namespace;
+- credentials: HF token → *Generate S3 credentials* → `HFAK…` pair, kept
+  in git-ignored `.dvc/config.local` (machine) / CI secrets (Stage 9) —
+  never in git, never in chat-repo;
+- `dvc[s3]==3.67.1` in `requirements.txt`; push/pull needs
+  `AWS_REQUEST_CHECKSUM_CALCULATION=when_required` +
+  `AWS_RESPONSE_CHECKSUM_VALIDATION=when_required` (recent botocore's
+  trailing CRC32 breaks the gateway);
+- **verified:** `dvc push` (2 CSVs + model), `dvc status -c` in sync,
+  fresh `git clone` → `dvc pull` → byte-identical files (md5 match),
+  `pytest` 31/31.
+
+**Stage 9 handoff (CI):** a fresh clone has no `.dvc/config.local` —
+store `AWS_ACCESS_KEY_ID`/`AWS_SECRET_ACCESS_KEY` (the HFAK pair) and the
+two checksum env vars as GitHub Actions secrets before any job that runs
+`dvc pull`.
+
+**Stage 10 handoff:** pipeline `outs` in `dvc.yaml` cannot coexist with
+static `.dvc` pointers for the same file — when wiring stages 10.1/10.2,
+first `dvc remove data/raw/openfoodfacts_training_set.csv.dvc
+data/processed/openfoodfacts_clean.csv.dvc models/model.joblib.dvc`
+(then `dvc add`-recreate after any repro that must re-pin, or let the
+pipeline own them); the HF remote config in `.dvc/config` stays as-is.
 
 ### Stage 6 — FastAPI Serving Layer
 **Stage 2/3 handoff — the feature row the API sends:**

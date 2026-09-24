@@ -114,10 +114,11 @@ chewsy/
 │   ├── clean.py
 │   ├── features.py
 │   ├── train.py
+│   ├── package.py               (registry champion → model.joblib, Stage 5)
 │   └── batch_predict.py      (offline CSV scoring)
 ├── models/
-│   ├── model.joblib          (gitignored — DVC/artifact)
-│   └── training_reference.csv
+│   ├── model.joblib          (gitignored — DVC-tracked via model.joblib.dvc)
+│   └── training_reference.csv  (git-committed — Stage 12 drift baseline)
 ├── app/
 │   ├── main.py               (FastAPI)
 │   ├── off_client.py         (Open Food Facts client)
@@ -132,6 +133,8 @@ chewsy/
 │   └── next.config.js
 ├── tests/
 │   ├── test_features.py
+│   ├── test_train.py
+│   ├── test_package.py
 │   └── test_api.py
 ├── docs/
 │   └── data_quality_report.md (LOCAL ONLY — in .git/info/exclude,
@@ -175,7 +178,7 @@ Work the PRD stages in order (0→13). For each stage:
 Priority reminder: MUST = non-negotiable; SHOULD = cut if behind. Timeline blocks
 and cut order are in PRD §3 and Hard rule 6.
 
-## As-built interfaces (Stages 0–4, as of 25 Sep 2026)
+## As-built interfaces (Stages 0–5, as of 25 Sep 2026)
 
 - **Data:** `data/processed/openfoodfacts_clean.csv` — 19,998 × 22,
   DVC-tracked; nutrient NaNs are **retained on purpose** (45,453 nulls)
@@ -227,6 +230,28 @@ and cut order are in PRD §3 and Hard rule 6.
   100 MB/file limit. Don't "fix" this by logging every run's model.
   `mlruns/` + `mlflow.db` as committed = 19 MB and contain everything
   grading needs (metrics, confusion matrices, SHAP plots, registry).
+- **Packaged artifact (Stage 5, as built):** `python src/package.py` →
+  `models/model.joblib` (17.3 MB) + `models/training_reference.csv`
+  (19,998 × 20, git-committed, NaN-preserving, no `code`/`nova_group` —
+  the live input space for Stage 12 KS drift checks). Source of the
+  dump: `mlflow.sklearn.load_model("models:/chewsy-nova@champion")`, so
+  joblib == registry == committed `mlruns/` pickle (enforced by
+  `tests/test_package.py`, which asserts registry-vs-joblib prediction
+  equality inside a fresh subprocess — the PRD 5.2 pickle guard).
+  Re-run after any retrain: `python src/package.py && dvc add
+  models/model.joblib && dvc push`.
+- **DVC remote (as built, Stage 5):** default remote `hf-bucket` in
+  `.dvc/config` (committed, secret-free):
+  `s3://chewsy-dvc/dvc-store` via `endpointurl https://s3.hf.co/prem2903`,
+  `region us-east-1` — a **private** HuggingFace Storage Bucket. S3
+  creds (HFAK pair from an HF token) live only in git-ignored
+  `.dvc/config.local` (machine) or CI env (Stage 9 secrets). Push/pull
+  must export `AWS_REQUEST_CHECKSUM_CALCULATION=when_required` and
+  `AWS_RESPONSE_CHECKSUM_VALIDATION=when_required` (botocore trailing
+  CRC32 breaks the gateway). Fresh-clone flow: creds → `dvc pull` →
+  `pytest`. **Stage 10:** `dvc remove` the static `*.dvc` pointers
+  (data + model) before pipeline `outs` claim the same files.
+  `requirements.txt` pins `dvc[s3]==3.67.1`.
 - **Evidence:** `python src/features.py` prints skew/filter/PCA/SVD
   numbers. Full evidence log: `docs/data_quality_report.md` —
   **local-only** (listed in `.git/info/exclude`): append each stage's
@@ -247,10 +272,15 @@ pytest
 # Feature-engineering evidence (skew/filter/PCA/SVD printout)
 python src/features.py
 
-# Data pipeline
-dvc init
+# Data pipeline (DVC remote = HF bucket; set AWS_* env first — see README)
+dvc pull                       # restore training CSVs + model from the remote
 dvc add data/raw/openfoodfacts_training_set.csv
-dvc repro
+dvc status -c                  # confirm cache/remote sync
+dvc repro                      # Stage 10: full pipeline (not wired yet)
+
+# Packaging (Stage 5)
+python src/package.py          # champion → models/model.joblib + reference
+dvc add models/model.joblib && dvc push
 
 # Experiment tracking (Stage 4)
 python src/train.py --runs 1 2 3 4 5 6   # six tracked runs
