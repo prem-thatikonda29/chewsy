@@ -226,26 +226,37 @@ is retired; `fetch_training_set.py` replaces it.
 **Goal:** the same rigor applied to every prior dataset in this project —
 verify before trusting.
 
-- [ ] 2.1 Load `openfoodfacts_training_set.csv`, report: row count, null %
+- [x] 2.1 Load `openfoodfacts_training_set.csv`, report: row count, null %
   per column, duplicate `code` (barcode) count, `nova_group` value counts,
   and value ranges for
   every `*_100g` nutrient column (flag anything negative or implausibly
   large — e.g. `energy_100g` > 4000 kcal/100g is almost certainly bad data).
   **Done when:** a printed diagnostic report exists and every flagged
   anomaly has a documented decision (drop / cap / impute) in code comments.
-- [ ] 2.2 Drop exact-duplicate `code` rows (keep first).
-- [ ] 2.3 Missing nutrient handling: for each `*_100g` column, impute using
+  ✅ `clean.py::report()` prints all of the above plus an independent
+  consistency pass: macro sums vs 100g, energy vs Atwater estimate,
+  near-duplicate name+brand groups, brand/text hygiene. Observed at 20k:
+  salt max 1630 g, energy max 8200 kcal, 1 negative fiber, 46 HTML-entity
+  names, 16107 list-repr brands — every flag has a code-commented decision.
+- [x] 2.2 Drop exact-duplicate `code` rows (keep first).
+  ✅ 2 dropped (19,998 remain; classes 1/3/4 at 5000, class 2 at 4998).
+- [x] 2.3 Missing nutrient handling: for each `*_100g` column, impute using
   the **median within the same `categories_tags` group**, not the global
   median (justify: a snack's missing fiber should be filled from other
   snacks, not from beverages). Add a `<col>_was_missing` indicator column
   for at least `fiber_100g` and `sodium_100g` — missingness itself may be
   informative for less-documented (often smaller-brand) products.
-- [ ] 2.4 Normalize the text feature (currently named
+  ✅ Group median → global median → 0 fallback ladder; indicators added for
+  `fiber_100g`, `sodium_100g`, plus analysis-driven `text_was_missing` and
+  `nutrients_all_missing` (17% of rows report no nutrient at all).
+- [x] 2.4 Normalize the text feature (currently named
   `ingredients_pseudo_text` — built by `fetch_training_set.py` from
   `ingredients_tags`): lowercase, strip punctuation noise, collapse
   whitespace. Do **not** remove stopwords yet — TF-IDF in Stage 3
   handles that via `stop_words='english'`.
-- [ ] 2.5 **Leakage check (write this as an actual code comment, not just a
+  ✅ Lowercase + punctuation strip + whitespace collapse + HTML unescape;
+  stopwords deliberately left for Stage 3 TF-IDF.
+- [x] 2.5 **Leakage check (write this as an actual code comment, not just a
   mental note):** confirm no Nutri-Score-derived field is in the feature
   set — `fetch_training_set.py` already excludes them via
   `FORBIDDEN_LEAKAGE_FIELDS` (API names: `nutrition_grades`,
@@ -253,9 +264,12 @@ verify before trusting.
   export called this `nutrition_grade_fr`). It's a different computed label
   sitting next to the target, not a legitimate predictor — assert it's
   absent from the clean CSV here too, don't just trust the fetch script.
-- [ ] 2.6 Save output to `data/processed/openfoodfacts_clean.csv`,
+  ✅ Asserted twice in `clean.py` (on raw load and on final frame), with
+  the PRD's rationale as an actual comment.
+- [x] 2.6 Save output to `data/processed/openfoodfacts_clean.csv`,
   `dvc add` it.
-- [ ] 2.7 Commit: `feat: data cleaning pipeline (clean.py)`.
+  ✅ 19,998 rows × 22 cols, zero nulls at write time, DVC-tracked.
+- [x] 2.7 Commit: `feat: data cleaning pipeline (clean.py)`.
 
 ### Stage 3 — Feature Engineering
 **Goal:** every technique here should map to a phase in the course mindmap
