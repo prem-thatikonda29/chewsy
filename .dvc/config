@@ -1,0 +1,6 @@
+[core]
+    remote = hf-bucket
+['remote "hf-bucket"']
+    url = s3://chewsy-dvc/dvc-store
+    endpointurl = https://s3.hf.co/prem2903
+    region = us-east-1
