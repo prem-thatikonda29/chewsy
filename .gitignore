@@ -1,0 +1,32 @@
+# Virtual env
+.venv/
+
+# Data CSVs live in DVC, not git — but the .dvc pointer files DO get committed
+data/raw/*
+data/processed/*
+!/data/raw/*.dvc
+!/data/processed/*.dvc
+# (also keep directory placeholders trackable if ever added)
+!data/raw/.gitkeep
+!data/processed/.gitkeep
+
+# Bulk OFF export (~1GB) — never commit; Stage 1 uses fetch_training_set.py
+en.openfoodfacts.org.products.tsv
+
+# Model artifacts (DVC/artifact instead — but models/*.dvc pointers ARE tracked)
+models/*.joblib
+
+# NOTE: mlflow.db and mlruns/ are deliberately NOT ignored — the MLflow
+# experiment history (params, metrics, registry, Stage 4 plots) is grading
+# evidence and must ship with the submission. Same for dvc.yaml / dvc.lock
+# and every *.dvc pointer: never add blanket ignores for those.
+
+# Python
+__pycache__/
+
+# Frontend
+frontend/node_modules/
+frontend/.next/
+
+# macOS
+.DS_Store
