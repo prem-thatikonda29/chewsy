@@ -726,8 +726,8 @@ matches what the champion was packaged with.
   killed the run and lost already-scored rows) + barcode-format validation
   before anything is sent to OFF.
 - [x] 6.6 Commit: `feat: FastAPI prediction service + batch scoring script`.
-- [ ] 6.7 **Scope addition (approved 25 Sep 2026 — NOT yet built; planned
-  together with Stage 7; extended same day with the two-axis reframe):**
+- [x] 6.7 **Scope addition (approved 25 Sep 2026 — built same day with the
+  two-axis reframe):**
   extend `PredictResponse` with the facts a scan-result screen needs (data
   is already in hand during scoring — zero extra API calls):
   - `nutrition_100g`: the 8 per-100g values taken from the **normalized**
@@ -822,10 +822,31 @@ matches what the champion was packaged with.
     band,
   - boundaries: exactly 5.0 sugars → `low`; exactly 22.5 → `medium`
     (lock the inclusive/exclusive edges against the table above),
-  - beverage band-flip: a drink row with `categories_tags` containing
-    `en:beverages` and sugars 4.8 → drink band `medium` (> 2.5) while the
-    same value as a solid is `low` (≤ 5); same product with empty
-    categories → falls back to the solid table.
+   - beverage band-flip: a drink row with `categories_tags` containing
+     `en:beverages` and sugars 4.8 → drink band `medium` (> 2.5) while the
+     same value as a solid is `low` (≤ 5); same product with empty
+     categories → falls back to the solid table.
+
+  — done: `src/nutrition_flags.py` (both threshold tables + all three
+  documented decisions as code comments, `is_beverage`, band helpers,
+  custom positives, headline rule incl. class-3 wording + all-null
+  fallback). `PredictResponse` gains `nutrition_100g`, `traffic_lights`,
+  `positives`, `headline` + `additives_n`/`ingredients_n`/`ingredients_text`
+  (raw OFF package text, HTML-unescaped for the facts panel). **Interpretation
+  recorded:** "the 8 per-100g values" = the standard UK/EU panel rows —
+  energy (kcal), fat, saturated_fat, carbohydrates, sugars, fiber, proteins,
+  salt; `sodium_100g` dropped as redundant with salt (salt = sodium × 2.5).
+  All fields computed from the `df.iloc[0]` already in `predict()` — zero
+  extra OFF calls; Hard rule 12 holds (pure `float` threshold lookups, no
+  grade fields touched) and the three Hard rule 11 guards + forbidden-field
+  response test pass unchanged over the extended body.
+  Tests: the 4 PRD cases in `tests/test_api.py::TestStage67TwoAxisResponse`
+  (Nutella sugars `high`/salt `low` + energy 539/salt 0.107, missing →
+  `null`, 5.0→`low`/22.5→`medium` edges, beverage flip 4.8 with empty-
+  categories fallback) + 45 pure unit tests in `tests/test_nutrition_flags.py`
+  (full quadrant table, class-3 wording, all-null fallback, descriptor-not-
+  verdict property, solid/drink edge locks, positives bands).
+  Suite: **107 passed, 1 gated skip**.
 
 ### Stage 7 — Next.js Frontend
 **Goal:** a real, camera-driven scanner UI — not a form. This is the layer

@@ -19,6 +19,8 @@ Design points:
 
 from __future__ import annotations
 
+import html
+import math
 import os
 import time
 from collections.abc import Iterator
@@ -42,6 +44,7 @@ from app.schemas import (
     ShapFeature,
 )
 from src.clean import FORBIDDEN_LEAKAGE_FIELDS, normalize_live_row
+from src.nutrition_flags import build_scan_facts
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 MODEL_PATH = REPO_ROOT / "models" / "model.joblib"
@@ -74,6 +77,16 @@ def _build_explainer(pipeline) -> shap.TreeExplainer:
     model = pipeline.named_steps["model"]
     tree_model = getattr(model, "estimator_", model)
     return shap.TreeExplainer(tree_model)
+
+
+def _as_int(value) -> int:
+    """Count column -> int; missing/NaN (a product that publishes no
+    additive count) -> 0, never a 500."""
+    try:
+        f = float(value)
+    except (TypeError, ValueError):
+        return 0
+    return int(f) if math.isfinite(f) else 0
 
 
 def score_row(pipeline, df: pd.DataFrame) -> tuple[int, np.ndarray]:
@@ -208,6 +221,18 @@ def predict(req: PredictRequest) -> PredictResponse:
         top = shap_top_features(STATE["pipeline"], df, pred)
         confidence = float(proba[pred - 1])
 
+        # Stage 6.7 -- the "what's in it" axis: computed from the normalized
+        # row already in hand (zero extra OFF calls; Hard rule 12: local
+        # threshold lookups, never OFF-derived grades). The facts panel's
+        # ingredient list is the RAW package text (not the lowercased
+        # pseudo-text the model sees) -- unescaped so the UI renders it as
+        # printed.
+        row = df.iloc[0].to_dict()
+        facts = build_scan_facts(row, pred)
+        ingredients_text = html.unescape(
+            str(product.get("ingredients_text") or "")
+        ).strip()
+
         return PredictResponse(
             barcode=req.barcode,
             # normalized by clean() (HTML-unescaped/stripped) — Stage 7.5
@@ -221,6 +246,10 @@ def predict(req: PredictRequest) -> PredictResponse:
                 str(i + 1): round(float(p), 4) for i, p in enumerate(proba)
             },
             shap_top_features=top,
+            **facts,
+            additives_n=_as_int(row.get("additives_n")),
+            ingredients_n=_as_int(row.get("ingredients_n")),
+            ingredients_text=ingredients_text,
         )
     except HTTPException:
         METRICS["errors"] += 1

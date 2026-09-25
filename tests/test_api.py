@@ -303,6 +303,104 @@ class TestPredict:
         assert resp.status_code == 422
 
 
+class TestStage67TwoAxisResponse:
+    """PRD 6.7 — nutrition facts, NHS traffic lights, combined headline.
+
+    All four fields are computed locally from the normalized scoring row
+    (Hard rule 12: threshold lookups on nutrition_100g, never fetched
+    OFF grades) — the fixture's nova_group/Nutri-Score stripping tests
+    above still cover the whole body.
+    """
+
+    def test_nutella_bands_facts_and_headline(self, client, fake_fetch):
+        body = _response_for(client)
+
+        # traffic lights from the SOLID table (fixture tags have no
+        # en:beverages) — sugars 56.3 > 22.5 high, salt 0.107 <= 0.3 low
+        assert body["traffic_lights"] == {
+            "sugars": "high",
+            "fat": "high",          # 30.9 > 17.5
+            "saturated_fat": "high",  # 10.6 > 5
+            "salt": "low",
+        }
+        # the 8 per-100g facts, Stage 2-normalized (PRD examples: energy
+        # 539, salt 0.107) — null for anything unpublished, never invented
+        assert body["nutrition_100g"] == {
+            "energy": 539,
+            "fat": 30.9,
+            "saturated_fat": 10.6,
+            "carbohydrates": 57.5,
+            "sugars": 56.3,
+            "fiber": 0.0,
+            "proteins": 6.3,
+            "salt": 0.107,
+        }
+        # custom positives (fibre good >=6 / moderate >=3; protein >=10/5)
+        assert body["positives"] == {"fiber": "low", "proteins": "moderate"}
+        assert body["additives_n"] == 2
+        assert body["ingredients_n"] == 9
+        assert body["ingredients_text"].startswith("Sucre, huile de palme")
+        # two-axis headline: model computes NOVA 4, nutrients have reds
+        assert body["predicted_nova"] == 4
+        assert body["headline"] == (
+            "Ultra-processed and high in sugar, fat and saturated fat"
+        )
+
+    def test_missing_nutrient_is_null_never_a_guessed_band(
+        self, client, clean_product, monkeypatch
+    ):
+        product = dict(clean_product)
+        product["nutriments"] = {
+            k: v for k, v in clean_product["nutriments"].items() if k != "salt_100g"
+        }
+        monkeypatch.setattr(off_client, "fetch_product", lambda barcode: dict(product))
+        body = _response_for(client)
+        assert body["traffic_lights"]["salt"] is None
+        assert body["nutrition_100g"]["salt"] is None
+        # published nutrients still get their bands
+        assert body["traffic_lights"]["sugars"] == "high"
+        assert body["nutrition_100g"]["sugars"] == 56.3
+
+    @pytest.mark.parametrize(
+        "sugars,expected",
+        [(5.0, "low"), (22.5, "medium")],  # inclusive edges of the PRD table
+    )
+    def test_band_boundaries_lock_inclusive_edges(
+        self, client, clean_product, monkeypatch, sugars, expected
+    ):
+        product = dict(clean_product)
+        nutriments = dict(clean_product["nutriments"])
+        nutriments["sugars_100g"] = sugars
+        product["nutriments"] = nutriments
+        monkeypatch.setattr(off_client, "fetch_product", lambda barcode: dict(product))
+        body = _response_for(client)
+        assert body["traffic_lights"]["sugars"] == expected
+
+    def test_beverage_flips_to_drink_thresholds(
+        self, client, clean_product, monkeypatch
+    ):
+        def _product(categories):
+            p = dict(clean_product)
+            nutriments = dict(clean_product["nutriments"])
+            nutriments["sugars_100g"] = 4.8  # low for solids, medium for drinks
+            p["nutriments"] = nutriments
+            p["categories_tags"] = categories
+            return p
+
+        # drink table: 4.8 > 2.5 -> medium
+        monkeypatch.setattr(
+            off_client, "fetch_product",
+            lambda barcode: _product(["en:breakfasts", "en:beverages", "en:teas"]),
+        )
+        assert _response_for(client)["traffic_lights"]["sugars"] == "medium"
+
+        # same product, empty categories -> solids table: 4.8 <= 5 -> low
+        monkeypatch.setattr(
+            off_client, "fetch_product", lambda barcode: _product([])
+        )
+        assert _response_for(client)["traffic_lights"]["sugars"] == "low"
+
+
 class TestBatchPredict:
     def test_scores_csv_and_isolates_failures(
         self, client, fake_fetch, clean_product, tmp_path, monkeypatch

@@ -8,6 +8,8 @@ human-readable name of that predicted class.
 
 from __future__ import annotations
 
+from typing import Literal
+
 from pydantic import BaseModel, Field
 
 # PRD: NOVA classes 1..4
@@ -17,6 +19,11 @@ NOVA_LABELS = {
     3: "Processed food",
     4: "Ultra-processed food",
 }
+
+# Stage 6.7 -- band vocabularies (source of truth for the values lives in
+# src/nutrition_flags.py; these Literals just make the schema self-document)
+TrafficBand = Literal["low", "medium", "high"]
+PositiveBand = Literal["good", "moderate", "low"]
 
 
 class PredictRequest(BaseModel):
@@ -70,6 +77,44 @@ class PredictResponse(BaseModel):
     )
     shap_top_features: list[ShapFeature] = Field(
         description="Top SHAP features driving this specific prediction."
+    )
+
+    # --- Stage 6.7: the "what's in it" axis + facts the result screen needs.
+    # Computed LOCALLY from the normalized row already in hand (Hard rule 12:
+    # threshold lookups on nutrition_100g, never fetched OFF grades) --
+    # zero extra API calls, no Nutri-Score family anywhere in this model.
+    nutrition_100g: dict[str, float | None] = Field(
+        description="Per-100g facts panel: energy (kcal), fat, "
+                    "saturated_fat, carbohydrates, sugars, fiber, proteins, "
+                    "salt -- Stage 2-normalized values; null = not published "
+                    "(frontend renders null as '—', never a fabricated number)."
+    )
+    traffic_lights: dict[str, TrafficBand | None] = Field(
+        description="NHS nutrient traffic lights for sugars/fat/"
+                    "saturated_fat/salt: 'low'|'medium'|'high', null when the "
+                    "nutrient is missing (band never guessed). Drinks use the "
+                    "per-100ml thresholds. Computed locally -- not OFF grades."
+    )
+    positives: dict[str, PositiveBand | None] = Field(
+        description="CUSTOM fibre/protein bands ('good'|'moderate'|'low', "
+                    "null when missing) -- these are NOT traffic lights; the "
+                    "FSA scheme has no official thresholds for them."
+    )
+    headline: str = Field(
+        description="Combined two-axis one-liner (processing x nutrients). "
+                    "NOVA is a descriptor, never a verdict: the headline "
+                    "never calls a class good/bad, and states 'nutrition data "
+                    "unavailable' when no nutrients are published."
+    )
+    additives_n: int = Field(
+        description="Number of additives reported on the package."
+    )
+    ingredients_n: int = Field(
+        description="Number of ingredients reported on the package."
+    )
+    ingredients_text: str = Field(
+        description="Full ingredient list as printed on the package (raw OFF "
+                    "text, HTML-unescaped) -- what's actually in it."
     )
 
 
