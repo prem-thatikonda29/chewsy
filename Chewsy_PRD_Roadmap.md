@@ -745,7 +745,9 @@ matches what the champion was packaged with.
   `tests/test_api.py` to assert the new fields (e.g. Nutella: energy 539,
   salt 0.107). Feeds Stage 7.8's facts panel and 7.5's hero.
 
-  **Traffic-light thresholds, per 100g (current NHS/FSA guidance):**
+  **Traffic-light thresholds (current NHS/FSA guidance):**
+
+  Solids, per 100g:
 
   | Nutrient | Low (green) | Medium (amber) | High (red) |
   |---|---|---|---|
@@ -754,15 +756,32 @@ matches what the champion was packaged with.
   | Saturated fat | ≤ 1.5g | > 1.5–5g | > 5g |
   | Salt | ≤ 0.3g | > 0.3–1.5g | > 1.5g |
 
-  **Documented decisions (put both as code comments):**
+  Drinks, per 100ml (NHS published drink variants — exactly half the solid
+  values):
+
+  | Nutrient | Low (green) | Medium (amber) | High (red) |
+  |---|---|---|---|
+  | Sugars | ≤ 2.5g | > 2.5–11.25g | > 11.25g |
+  | Fat | ≤ 1.5g | > 1.5–8.75g | > 8.75g |
+  | Saturated fat | ≤ 0.75g | > 0.75–2.5g | > 2.5g |
+  | Salt | ≤ 0.15g | > 0.15–0.75g | > 0.75g |
+
+  **Documented decisions (all three as code comments):**
   1. These are the **current NHS figures**, not the older 2007 FSA ones
      (which used fat 20g, sugars 15g) — a judge who knows the scheme may
      check which version we used.
-  2. Thresholds are for **solids per 100g**; drinks have separate, lower
-     thresholds. **Decision: beverages are explicitly scoped out in v1** —
-     a comment in `src/nutrition_flags.py` says the bands assume solids;
-     handling drinks via `categories_tags` is a noted future extension,
-     not build-time logic.
+  2. **Beverages are handled, not scoped out** (revised decision — small
+     build, so worth doing right): a product is a drink iff
+     `"en:beverages" in categories_tags` (OFF's `categories_tags`
+     includes the ancestor chain; the field already reaches the scoring
+     row via `extract_feature_input` → `normalize_live_row`, so this is
+     one boolean on data we already have — **zero plumbing**). Pick the
+     drinks table when true; missing/empty `categories_tags` → default to
+     solids, documented. Code comment notes two caveats: (a) OFF reports
+     drink nutrients in the same `_100g` fields though they are
+     per-100ml values — fine because beverages have density ≈ 1;
+     (b) alcoholic/high-sugar-syrup drinks are the known edge cases and
+     are accepted, not special-cased.
   3. Fibre and protein have **no official traffic-light thresholds** (the
      FSA scheme covers only the four nutrients of concern). `positives`
      bands are clearly-labelled **custom** bands (fibre: good ≥6g,
@@ -802,7 +821,11 @@ matches what the champion was packaged with.
   - a product with a missing nutrient → key is `null`, not a fabricated
     band,
   - boundaries: exactly 5.0 sugars → `low`; exactly 22.5 → `medium`
-    (lock the inclusive/exclusive edges against the table above).
+    (lock the inclusive/exclusive edges against the table above),
+  - beverage band-flip: a drink row with `categories_tags` containing
+    `en:beverages` and sugars 4.8 → drink band `medium` (> 2.5) while the
+    same value as a solid is `low` (≤ 5); same product with empty
+    categories → falls back to the solid table.
 
 ### Stage 7 — Next.js Frontend
 **Goal:** a real, camera-driven scanner UI — not a form. This is the layer
