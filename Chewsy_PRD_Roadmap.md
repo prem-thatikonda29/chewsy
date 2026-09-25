@@ -1236,15 +1236,59 @@ time here.
 this is the step that makes Stages 1–5 legible as a *pipeline*, not just a
 sequence of scripts you happened to run in order.
 
-- [ ] 10.1 `dvc.yaml` with stages: `fetch` → `clean` → `features` → `train`,
+- [x] 10.1 `dvc.yaml` with stages: `fetch` → `clean` → `features` → `train`,
   each with explicit `deps` and `outs` pointing at the real file paths from
   Section 4.
-- [ ] 10.2 `dvc repro` runs the whole thing end-to-end from the tracked raw
+- [x] 10.2 `dvc repro` runs the whole thing end-to-end from the tracked raw
   training set to a fresh `model.joblib`.
   **Done when:** `dvc repro` with no changes reports everything up to date;
   changing one parameter (e.g. `TARGET_PER_CLASS` or an SVD component count) and
   re-running only re-executes the affected downstream stages.
-- [ ] 10.3 Commit: `feat: DVC pipeline (dvc.yaml + dvc.lock)`.
+- [x] 10.3 Commit: `feat: DVC pipeline (dvc.yaml + dvc.lock)`.
+
+**Stage 10 as-built (25 Sep 2026):**
+- **10.1:** four stages with only honest deps/outs — `fetch`
+  (`deps`: fetch script + `src/params.py`; `param` `fetch.target_per_class`;
+  `out` raw training CSV) → `clean` (`deps` clean.py + raw CSV; `out`
+  processed CSV) → `features` (evidence cmd, `deps` incl. processed CSV,
+  `param` `features.n_svd_components`, **no outs by design** — its product
+  is the printed Stage 3 evidence) → `train`
+  (`python src/train.py --runs 1 2 3 4 5 6 --register && python src/package.py`;
+  params `n_svd_components` + `train.text_dropout_frac`; `out`
+  `models/model.joblib`). `mlflow.db`, `mlruns/`, `models/training_reference.csv`
+  stay **git-managed** — grading evidence, never DVC outs. Static `.dvc`
+  pointers removed first per the Stage 10 handoff note (files untouched;
+  backup copy taken; `dvc status -c`: cache + HF remote in sync).
+  **Deviations, all measured:** (a) params must be *read* — new
+  `params.yaml` (3 keys) + `src/params.py`; wired into fetch
+  (`TARGET_PER_CLASS`), `features.__main__` (SVD count), `train.py`
+  (`AUGMENT_TEXT_DROPOUT` + `build_full_pipeline(n_svd_components=…)`),
+  defaults identical to committed values so direct runs and tests are
+  unchanged; PyYAML 6.0.3 pinned (now imported directly). (b) **DVC 3.67
+  rejects flat `params: [params.yaml:key]` strings** (stores the whole
+  entry as one key → MissingParamsError) — dict form `- params.yaml:\n
+  - fetch.target_per_class` with **dotted paths** works; validated in a
+  scratch repo before touching the real one. (c) `dvc.lock` **seeded via
+  `dvc commit -f <stage>`** from existing workspace state — no live
+  refetch, no retrain; `tests/test_package.py` DVC-tracking test rewritten
+  to the Stage 10 contract (pipeline out + lock entry; pointer must be gone).
+- **10.2 (verified both halves):** first `dvc repro` → all four stages
+  `didn't change, skipping` → *Data and pipelines are up to date*.
+  Param demo: `n_svd_components 25 → 24` → repro **skipped `fetch` +
+  `clean`, re-ran `features` + `train` only** (83 s total; run5 xgboost
+  f1_macro **0.9457 at 24 vs 0.9465 at 25** — the param provably reaches
+  the model; lock diff shows `features.n_svd_components: 24` and a new
+  model md5). Register re-picked the best drop=0.20 run → v5, then state
+  restored byte-identical: `git checkout` params/dvc.lock/mlflow.db/mlruns
+  + `dvc checkout models/model.joblib` → md5 `5ef31f46…`, 17,669,223 bytes
+  (= original), champion alias back to **v4**, `git status` clean,
+  `dvc repro` all-skip, pytest **110 passed + 1 skipped**. Demo log:
+  `/tmp/s10_repro_demo.log`.
+- **10.3:** `db64c1c feat: DVC pipeline (dvc.yaml + dvc.lock)`.
+  **Operational notes:** registering from this laptop re-introduces
+  absolute mlflow paths — rerun the 3da0c3f relativize UPDATE before
+  pushing if a train/register ever ships; restore after any demo run is
+  git-checkout + `dvc checkout` (both shown above), never `dvc add`.
 
 ### Stage 11 — Cloud Deployment (bonus, only if on schedule)
 - [ ] 11.1 Launch EC2 instance, open ports 22/8000/3000 in the security

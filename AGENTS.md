@@ -104,6 +104,7 @@ chewsy/
 ├── README.md
 ├── dvc.yaml
 ├── dvc.lock                  (generated)
+├── params.yaml               (Stage 10: pipeline params the scripts read)
 ├── requirements.txt
 ├── conftest.py                (pytest: puts repo root on sys.path)
 ├── data/
@@ -114,10 +115,11 @@ chewsy/
 │   ├── clean.py
 │   ├── features.py
 │   ├── train.py
+│   ├── params.py                 (Stage 10: params.yaml reader)
 │   ├── package.py               (registry champion → model.joblib, Stage 5)
 │   └── batch_predict.py      (offline CSV scoring)
 ├── models/
-│   ├── model.joblib          (gitignored — DVC-tracked via model.joblib.dvc)
+│   ├── model.joblib          (gitignored — DVC pipeline out via dvc.yaml train)
 │   └── training_reference.csv  (git-committed — Stage 12 drift baseline)
 ├── app/
 │   ├── main.py               (FastAPI)
@@ -299,6 +301,20 @@ and cut order are in PRD §3 and Hard rule 6.
   findings for Q&A prep, never `git add`/push it.
 - **`conftest.py`** at repo root puts the root on `sys.path` so bare
   `pytest` can `import src.*`.
+- **DVC pipeline (Stage 10):** `dvc.yaml` = fetch → clean → features →
+  train (+ register + package) with honest deps/outs; the three static
+  `*.dvc` pointers were `dvc remove`d (files/cache/remote unchanged).
+  `params.yaml` holds the only params the scripts read
+  (`fetch.target_per_class: 5000`, `features.n_svd_components: 25`,
+  `train.text_dropout_frac: 0.20`) via `src/params.py` — **dict-form
+  params entries with dotted paths** (flat `params.yaml:key` strings are
+  rejected by DVC 3.67). `mlflow.db`/`mlruns/`/`training_reference.csv`
+  stay git-managed, never outs. `dvc.lock` was seeded with
+  `dvc commit -f <stage>`; after any demo retrain, restore with
+  `git checkout -- params.yaml dvc.lock mlflow.db mlruns` +
+  `dvc checkout models/model.joblib` (champion v4 byte-identical), and
+  re-run the mlflow-path relativize (commit 3da0c3f) before pushing if a
+  register ever ships.
 
 ## Key commands
 
@@ -315,13 +331,14 @@ python src/features.py
 
 # Data pipeline (DVC remote = HF bucket; set AWS_* env first — see README)
 dvc pull                       # restore training CSVs + model from the remote
-dvc add data/raw/openfoodfacts_training_set.csv
 dvc status -c                  # confirm cache/remote sync
-dvc repro                      # Stage 10: full pipeline (not wired yet)
+dvc repro                      # Stage 10: fetch→clean→features→train;
+                               # all-skip = up to date. Never `dvc add` the
+                               # pipeline outs (pointers were removed)
 
 # Packaging (Stage 5)
 python src/package.py          # champion → models/model.joblib + reference
-dvc add models/model.joblib && dvc push
+dvc commit train && dvc push   # re-pin the pipeline out (pointers removed)
 
 # Experiment tracking (Stage 4)
 python src/train.py --runs 1 2 3 4 5 6   # six tracked runs
