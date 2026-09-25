@@ -6,5 +6,4 @@ commands. Do not duplicate or paraphrase its rules here — if something needs
 changing, change `AGENTS.md`.
 
 For stage-by-stage tasks, also re-read the relevant section of
-`Chewsy_PRD_Roadmap.md` before implementing. (`NutriScan_PRD_Roadmap.md` is
-a stale redirect — ignore it.)
+`Chewsy_PRD_Roadmap.md` before implementing.

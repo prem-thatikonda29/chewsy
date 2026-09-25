@@ -2,8 +2,12 @@
 
 Yuka-style barcode scanner for a Feature Engineering & MLOps mini-project.
 Scan a real product barcode → the backend live-fetches it from the Open Food
-Facts API → a trained model predicts its **NOVA processing level (1–4)** →
-the UI shows the verdict plus a SHAP explanation of *why*.
+Facts API → Chewsy answers **two questions**: *how it's made* — a trained
+model predicts the **NOVA processing level (1–4)** with a SHAP explanation of
+*why* — and *what's in it* — the nutrient facts, banded into NHS-style
+traffic lights. The two axes are scored independently: a candy bar can be
+ultra-processed *and* low in sugar, olive oil minimally processed *and* red
+for fat.
 
 ## Stack
 
@@ -31,9 +35,10 @@ uvicorn app.main:app --reload --port 8000
 cd frontend && npm install && npm run dev   # :3000
 ```
 
-`dvc repro` (end-to-end retraining) arrives with Stage 10 — until then the
-training data is restored by `dvc pull` and the packaged model by
-`python src/package.py` (both are already run for you in the shipped repo).
+`dvc repro` runs the whole pipeline end-to-end (fetch → clean → features →
+train + register + package). On this checkout — which ships with `dvc pull`
+already done — every stage reports *up to date*; touch `params.yaml` (or
+`dvc repro --force <stage>`) to actually retrain.
 
 ## Data & model storage (DVC → HuggingFace)
 
