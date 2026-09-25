@@ -1,0 +1,49 @@
+artifact_path: /Users/premthatikonda/Downloads/FE_MLOps_Assignment/mlruns/1/models/m-0c82424c0b704680bffe9ed1f7624046/artifacts
+flavors:
+  python_function:
+    env:
+      conda: conda.yaml
+      virtualenv: python_env.yaml
+    loader_module: mlflow.sklearn
+    model_path: model.pkl
+    predict_fn: predict
+    python_version: 3.12.0
+  sklearn:
+    code: null
+    pickled_model: model.pkl
+    serialization_format: pickle
+    sklearn_version: 1.9.1
+    skops_trusted_types: null
+is_signature_from_type_hint: false
+mlflow_version: 3.16.1
+model_id: m-0c82424c0b704680bffe9ed1f7624046
+model_size_bytes: 17674060
+model_uuid: m-0c82424c0b704680bffe9ed1f7624046
+prompts: null
+run_id: edc8b2fdb6a3443b8e558900736e3c00
+saved_input_example_info:
+  artifact_path: input_example.json
+  pandas_orient: split
+  serving_input_path: serving_input_example.json
+  type: dataframe
+signature:
+  inputs: '[{"type": "string", "name": "product_name", "required": false}, {"type":
+    "string", "name": "brands", "required": false}, {"type": "string", "name": "categories_tags",
+    "required": false}, {"type": "string", "name": "ingredients_pseudo_text", "required":
+    false}, {"type": "double", "name": "additives_n", "required": true}, {"type":
+    "double", "name": "ingredients_n", "required": true}, {"type": "double", "name":
+    "unknown_ingredients_n", "required": true}, {"type": "double", "name": "energy_100g",
+    "required": false}, {"type": "double", "name": "fat_100g", "required": false},
+    {"type": "double", "name": "saturated_fat_100g", "required": false}, {"type":
+    "double", "name": "carbohydrates_100g", "required": false}, {"type": "double",
+    "name": "sugars_100g", "required": false}, {"type": "double", "name": "fiber_100g",
+    "required": false}, {"type": "double", "name": "proteins_100g", "required": false},
+    {"type": "double", "name": "salt_100g", "required": false}, {"type": "double",
+    "name": "sodium_100g", "required": false}, {"type": "double", "name": "fiber_100g_was_missing",
+    "required": false}, {"type": "double", "name": "sodium_100g_was_missing", "required":
+    false}, {"type": "double", "name": "text_was_missing", "required": false}, {"type":
+    "double", "name": "nutrients_all_missing", "required": false}]'
+  outputs: '[{"type": "tensor", "tensor-spec": {"dtype": "int64", "shape": [-1]}}]'
+  params: null
+type_hint_from_example: false
+utc_time_created: '2026-09-25 12:27:13.169794'

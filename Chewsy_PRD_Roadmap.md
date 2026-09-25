@@ -312,7 +312,24 @@ verify before trusting.
   {1:5000, 2:4998, 3:5000, 4:5000} unchanged, indicators unchanged
   (fiber 10,501 / sodium 4,388 ones), leakage assert passes,
   `dvc status` up to date, final matrix still 0 non-finite.
-  Full table: `docs/data_quality_report.md` §7 (local-only).
+   Full table: `docs/data_quality_report.md` §7 (local-only).
+  **Count-null taxonomy (25 Sep 2026 — the project's key data finding):**
+  the three count columns' null rates are not bad-data noise — they are two
+  distinct populations, each verified against the live product API:
+  - **~50% lossy pull** (10,054 rows): the search API *never* returns a
+    count of 0 — min non-null = **1.0** in all three columns — and **18/18**
+    live product-API lookups on null-with-text rows came back `0`. These
+    nulls are true zeros the pull dropped; `clean.py` fills them **0 only
+    when ingredient text exists** (text-conditioned fill, commit
+    `fix: text-conditioned count fill`), never blindly.
+  - **20.2% genuine unknowns** (4,034 rows — every no-ingredient-list row):
+    null in training *and* in the live API (sparse Diet Coke) → kept NaN;
+    imputed later by `GroupMedianImputer`.
+  Null rates are class-structured, not random (class1 92.6%, class2 98.4%,
+  class3 76.9%, class4 14.0% — class 2 is mostly single-ingredient
+  products whose count was never reported); where training *has* a value,
+  live agrees **4/4 exact**. `ingredients_n` is null only on no-text rows.
+  Full evidence: `docs/data_quality_report.md` §14 (local-only).
 - [x] 2.7 Commit: `feat: data cleaning pipeline (clean.py)`.
 
 ### Stage 3 — Feature Engineering
@@ -485,7 +502,52 @@ nutrients; see 3.8) — but the PC1 finding (fat-density vs sugar-density,
   0.9415 > run2 logreg+text 0.8875 > run6 knn 0.8555 > run1 logreg 0.7973.
   Winner per-class F1: {1: 0.9645, 2: 0.9864, 3: 0.9179, 4: 0.9288} —
   NOVA 3 (processed foods) is the hard class everywhere. `print_comparison`
-  prints the table; `mlflow ui` shows the same.
+   prints the table; `mlflow ui` shows the same.
+  **Retrain generations + sparse companion metrics (25 Sep 2026 —
+  approved scope addition, this is the project's headline finding):**
+  - *Root cause:* no-ingredient-list training rows are
+    **{1: 179, 2: 3759, 3: 96, 4: 0}** — the model was never shown an
+    ultra-processed product without an ingredient list, so
+    `text_was_missing=1` was a learned near-deterministic pull toward
+    NOVA 1/2 (sparse Diet Coke: NOVA 1 @ 0.9988 pre-fix). Caveat that
+    shaped the fix: class 2's share is *legitimate domain logic* too —
+    single-ingredient products (olive oil, sugar) have no list because
+    the product IS the ingredient — and training rows all carry category
+    tags, so stubs and single-ingredient rows are only separable by
+    nutrients/brand/name (measured: 44% of no-text rows have all
+    nutrients missing vs ~10% of text rows).
+  - *Gen 2* (text-conditioned count fill): run5 = **0.9489**; sparse
+    helped but missed the bar (0.575 acc under the legacy sim).
+  - *Gen 3* (sparse-view text dropout, approved): `augment_text_dropout`
+    appends **full-stub twins** (blank ingredient text + blank
+    `categories_tags` + counts NaN + `text_was_missing=1`, nutrients/
+    brand kept) of a **stratified** 20% of TRAIN rows — post-split only,
+    with a hash tripwire asserting the eval frame is never mutated.
+    The **rate is a tracked MLflow param** (`text_dropout_frac`) and was
+    **swept as separate runs** (`--sweep 0 0.1 0.2 0.3`, champion config,
+    `role=text-dropout-sweep`): baseline F1 / sparse F1 =
+    0.9489/0.4135 → 0.9465/0.7540 → 0.9465/0.7726 → 0.9455/0.7754.
+    Chose **0.20** (Pareto-dominates 0.10; 0.30 buys +0.003 sparse for
+    baseline cost). **Every run now logs both populations**: `f1_macro`
+    (complete records) + `sparse_f1_macro` / `sparse_f1_class_3` /
+    `sparse_f1_class_4` (stub-shaped eval input).
+  - *Final matrix @ drop=0.20:* run5 xgboost **0.9465** (sparse 0.7726,
+    c3 0.685, c4 0.696) > run4 0.9432 > run3 0.9394 > run2 0.8749 >
+    run6 0.8509 > run1 0.7936 — same ordering as Gen 1. Held-out
+    before/after under the SAME full-stub sim: **sparse F1 0.4135 →
+    0.7726**; class-4 sparse **0.000 → 0.696**; class-3 0.353 → 0.685;
+    baseline cost only −0.0024 (0.9489 → 0.9465, both ≫ the 0.94 bar).
+  - *2,000-row flip analysis* (seed 42, mixed train/test rows — label as
+    sample stats if quoted): under the **identical legacy sim**, v2 → v4:
+    correct→wrong flips **42.1% → 19.4%**, confident-wrong (≥0.9)
+    **21.4% → 16.6%**; v4 under the full-stub sim: flips **18.0%**,
+    confident-wrong **9.5%**, full-stub acc .8155 / F1 .8163 (v2 on the
+    same sim: .5750/.5277 — model rewritten in place, sim comparison
+    only valid for the legacy shape; the held-out 0.4135 → 0.7726 above
+    is the cross-generation full-stub number). Per-class full-stub v4:
+    {1: 0.892, 2: 0.887, 3: 0.686, 4: 0.795} vs baseline {.992/1.000/
+    .980/.982}. Full logs: `docs/data_quality_report.md` §14
+    (local-only).
 - [x] 4.6 Register the winner in the Model Registry, alias it `champion`.
   **Done when:** `mlflow.pyfunc.load_model` can load it back by alias.
   ✅ `chewsy-nova` v1, alias `champion`, source = `champion_packaging_run5`
@@ -501,8 +563,18 @@ nutrients; see 3.8) — but the PC1 finding (fat-density vs sugar-density,
   `NovaLabelAdapter` (in `src/features.py`, Hard rule 4) maps {1,2,3,4} →
   {0,1,2,3} and decodes predictions back; the logged input example marks
   indicator/text columns nullable so Stage-6-style rows pass pyfunc schema
-  enforcement; the `code` barcode column is dropped from `X` (identifier,
-  not a feature — uint64 values break signature inference).
+   enforcement; the `code` barcode column is dropped from `X` (identifier,
+   not a feature — uint64 values break signature inference).
+  **Champion generations (25 Sep 2026):** v1 = Gen-1 run5 (0.9494) →
+  v2 = Gen-2 run5 after the count-fill fix (0.9489) → **v4 = Gen-3 run5
+  at `text_dropout_frac=0.20` (0.9465 baseline / 0.7726 sparse), current
+  `champion` alias**. `register_champion` now filters candidate runs by
+  *all three* of: current `params.data_sha256`, selected
+  `params.text_dropout_frac`, and `tags.role` ∉ {champion,
+  text-dropout-sweep} — so stale-data runs, sweep measurements and
+  packaging runs can never win the registry slot. Refit inside register
+  replays the same train-only augmentation (deterministic seed), so the
+  registered weights match the comparison run exactly.
 - [x] 4.7 Commit: `feat: MLflow tracking + 3 experiments, champion registered`.
   ✅ Committed as `feat: MLflow tracking + 6 experiments, champion registered`
   (message amended to match the approved 6-run matrix).
@@ -535,8 +607,15 @@ per-run models; metrics/plots/registry are all committed and sufficient.
   Source is `mlflow.sklearn.load_model("models:/chewsy-nova@champion")`
   per the Stage 4 handoff (provenance-clean); dump = **17.3 MB**,
   DVC-tracked (`models/model.joblib.dvc`) and pushed to the HF bucket —
-  git carries the pointer, never the blob (matches the `.gitignore`
-  `models/*.joblib` design).
+   git carries the pointer, never the blob (matches the `.gitignore`
+   `models/*.joblib` design).
+  **Repackaged for Gen 3 (25 Sep 2026):** after the text-dropout retrain,
+  `python src/package.py` re-froze the v4 champion — dump **17.7 MB**,
+  reference regenerated (19,998 × 20, unchanged shape), roundtrip check
+  predict=NOVA 1 on the reference's first row (true NOVA 1, 100% orange
+  juice), `dvc add` + `dvc push` re-synced (`dvc status -c`: in sync),
+  full suite 110 passed + 1 gated skip (incl. the fresh-process
+  registry-vs-joblib equality guard in `tests/test_package.py`).
 - [x] 5.2 Verify it reloads cleanly in a fresh Python process (`joblib.load`
   → `.predict()` on one sample) — this catches the "can't get attribute
   FeatureCreator" bug before it reaches the API.
@@ -844,9 +923,28 @@ matches what the champion was packaged with.
   (Nutella sugars `high`/salt `low` + energy 539/salt 0.107, missing →
   `null`, 5.0→`low`/22.5→`medium` edges, beverage flip 4.8 with empty-
   categories fallback) + 45 pure unit tests in `tests/test_nutrition_flags.py`
-  (full quadrant table, class-3 wording, all-null fallback, descriptor-not-
-  verdict property, solid/drink edge locks, positives bands).
-  Suite: **107 passed, 1 gated skip**.
+   (full quadrant table, class-3 wording, all-null fallback, descriptor-not-
+   verdict property, solid/drink edge locks, positives bands).
+   Suite: **107 passed, 1 gated skip**.
+- [x] 6.8 **Scope addition (approved 25 Sep 2026 — sparse-input honesty):**
+  `PredictResponse.data_sparse: bool` — true when the OFF record is a
+  **stub** (no ingredient text AND no category tags AND at least one count
+  unpublished; the measured live Diet Coke shape). Computed by
+  `app.main.is_sparse_input` from the **raw extracted row, BEFORE Stage 2
+  cleaning** (`build_feature_frame` returns `(frame, data_sparse)`), and
+  the frame carries an explicit assert that `data_sparse` is never in the
+  feature columns — response metadata only, Hard rule 11 spirit: the flag
+  reports *input quality*, it never conditions scoring (the verdict stays
+  100% model-computed on every scan; three label guards unchanged).
+  `headline` gains the honest fallback when sparse —
+  `"Not enough information to classify processing — [nutrient clause]"` —
+  so the loudest text on screen refuses to assert a processing level the
+  input can't support, while the nutrient axis keeps reporting.
+  `batch_predict.py` writes the flag too (`data_sparse` output column).
+  Tests: `TestDataSparse` (stub→True, documented→False, tag-only/
+  text-only/counts-present→False, sparse scan →200 with model verdict +
+  honest headline + `nova_group` absent, frame-column assert) — suite
+  **110 passed, 1 gated skip**.
 
 ### Stage 7 — Next.js Frontend
 **Goal:** a real, camera-driven scanner UI — not a form. This is the layer
@@ -999,12 +1097,34 @@ anything requiring a second backend fetch.
   manual camera e2e against the local API, and 6.7's extended pytest
   suite green (no frontend test suite required by the PRD).
   **Status 25 Sep 2026:** typecheck ✅ lint ✅ build ✅ (static `/`),
-  pytest ✅ 107 passed + 1 gated skip, plus a 27-check automated
-  headless-Chrome e2e (scan → result card → history → 404 error → reset,
-  zero unexpected console/network errors). **Remaining: the manual
-  camera e2e — needs a physical camera + human at
-  `localhost:3000` with the API on :8000.**
+  pytest ✅ 110 passed + 1 gated skip, plus a 33-check automated
+  headless-Chrome e2e (scan → result card → history → 404 error → reset
+  → sparse stub scan showing the forced low-information state, zero
+  unexpected console/network errors). **Remaining: the manual camera
+  e2e — needs a physical camera + human at `localhost:3000` with the
+  API on :8000.**
 - [x] 7.12 Commit: `feat: Next.js scanner UI` (this commit).
+- [x] 7.13 **Scope addition (approved 25 Sep 2026 — sparse result state,
+  Fix 2 frontend half):** when the API returns `data_sparse: true` the
+  result card never shows a confident processing verdict:
+  1. **Processing axis** → the NOVA badge is replaced by a dashed
+     `"Not enough information to classify"` state (mirrors
+     `nutrition_flags.PROCESSING_UNKNOWN` — one string, not two);
+  2. **Tier chip** → forced to the existing `{word:"Low information",
+     variant:"dashed"}` treatment **regardless of the raw probability**
+     — the percentage is hidden from the chip (the real number stays in
+     the API response and in `class_probabilities` for transparency,
+     per the approved contract);
+  3. **Nutrition axis still renders** — traffic-light chips are computed
+     from the nutrient half of the record, which Diet Coke's stub
+     actually has (all-zero values are *real* for a diet drink), so the
+     two-axis promise survives the thin input;
+  4. probability caption switches to `"4-class distribution · thin
+     input"`.
+  `types/predict.ts` mirrors the field; `DESIGN.md` Do/Don't line
+  added; the capability is demonstrated live (stub 5000112644906 →
+  NOVA 1 @ 0.81 post-fix with the honest framing — headline owns the
+  gap, not the badge).
 
 ### Stage 8 — Containerization
 **Goal:** one image, both a Python and a Node runtime inside it — this is
@@ -1093,6 +1213,18 @@ null-rate change: OFF pages that stop recording fiber show up as a rising
   product changed (two axes). Cite our own SHAP output as evidence of
   digging in: `additives_n` at **−1.62 arguing against class 4** — the
   model isn't counting additives, it's reading industrial formulation.
+  **Add the sparse-view beat (the honest-metrics slide, content ready
+  25 Sep 2026):** "Our model scores **0.95 macro-F1 on complete
+  records**… and on thin records — no ingredient list, no category tags —
+  the original model scored **0.41** on the exact same held-out rows."
+  Then the investigation → fix arc: 76% of live OFF records are thin
+  (null taxonomy §14.1), training contained **{1:179, 2:3759, 3:96, 4:0}**
+  no-text rows so blank input pulled to class 1/2, fix = stratified
+  full-stub augmentation swept 0/10/20/30% as tracked MLflow params →
+  final: **0.95 complete / 0.77 thin** (class-4 thin: 0.00 → 0.70),
+  cost = −0.002 on complete records. The 0.41 → 0.77 delta *is* the
+  story; never present 0.95 alone. Both numbers come from the same
+  eval split and the same simulator — say so.
 - [ ] 13.2 Rehearse the live demo with **3 real barcodes** picked in
   advance, chosen to cover the headline quadrants:
   1. **ultra-processed but nutritionally decent** — muesli,
@@ -1101,6 +1233,23 @@ null-rate change: OFF pages that stop recording fiber show up as a rising
      proves the two axes are genuinely independent).
   Also rehearse the camera on the **exact device and URL you'll present
   from** — localhost and deployed behave differently (see 11.3).
+  **Verified barcodes (25 Sep 2026, live recheck on the v4 champion):**
+  Nutella `3017620422003` → NOVA 4 @ 0.999 (credibility beat, OFF-labeled);
+  Coca-Cola `5449000000996` → NOVA 4 @ 0.999 (complete entry);
+  Red Bull `9002490100070` → NOVA 4 @ 0.993 / Sting `8902080000227` →
+  NOVA 4 @ 1.000 (energy drink — the headline-complaint fix, they
+  classify correctly). Quadrant picks 1–3 still to be locked in by
+  eye.
+  **Deliberate 4th scan (approved): Diet Coke `5000112644906`** — a
+  real stub record (all-zero nutrients, no ingredients, no tags).
+  Rehearse it as the sparse-honesty beat: response carries
+  `data_sparse: true`, UI shows "not enough information to classify"
+  while nutrition chips stay green, and narrate the 0.41 → 0.77 fix
+  (13.1 beat) — then optionally show `data_sparse: false` on the same
+  product's fuller record if OFF grows one (name+brand record matching
+  is the future-work slide: when a stub barcode and a documented
+  record exist for the same product, a `name+brand` lookup could join
+  them — not built, timeboxed out).
 - [ ] 13.3 Record a backup video of the full demo working, in case of
   live network/deployment issues on presentation day.
 - [ ] 13.4 Rehearse the trained-vs-live two-beat (from §1) as the answer to

@@ -206,11 +206,22 @@ and cut order are in PRD §3 and Hard rule 6.
 - **Trained model (Stage 4, as built):** `src/train.py` —
   `python src/train.py --runs 1 2 3 4 5 6`, then
   `python src/train.py --register`. Six runs in MLflow experiment
-  `chewsy-nova` (tracking `sqlite:///mlflow.db`, committed). Macro-F1:
-  run1 LR nutrients-only 0.7973 → run2 LR +text 0.8875 (text worth
-  **+0.09**), run3 RandomForest 0.9415, run4 HistGB 0.9442,
-  **run5 XGBoost 0.9494 = winner → registry `chewsy-nova` v1 alias
-  `champion`** (source run `champion_packaging_run5`), run6 KNN 0.8555.
+  `chewsy-nova` (tracking `sqlite:///mlflow.db`, committed). Macro-F1
+  **at `AUGMENT_TEXT_DROPOUT = 0.20` (Gen 3, current):**
+  run1 LR nutrients-only 0.7936 → run2 LR +text 0.8749 (text worth
+  **+0.09**), run3 RandomForest 0.9394, run4 HistGB 0.9432,
+  **run5 XGBoost 0.9465 = winner → registry `chewsy-nova` v4 alias
+  `champion`** (sparse full-stub F1 0.7726 on the same eval), run6 KNN
+  0.8509. **Gen-3 sparse-view augmentation (approved):**
+  `augment_text_dropout` appends full-stub TRAIN twins (blank text + blank
+  `categories_tags` + counts NaN + `text_was_missing=1`) of a stratified
+  20% of train rows, post-split only (eval-hash tripwire); rate swept as
+  tracked param `text_dropout_frac` via
+  `python src/train.py --sweep 0 0.1 0.2 0.3` (0 → 0.4135, 0.1 → 0.7540,
+  **0.2 chosen** → 0.7726, 0.3 → 0.7754; baseline 0.9489 → 0.9465).
+  **Every run logs baseline + sparse metrics pair**
+  (`f1_macro`/`sparse_f1_macro`/`sparse_f1_class_3`/`sparse_f1_class_4`).
+  Root cause: no-text training rows = {1:179, 2:3759, 3:96, 4:0}.
   Split: stratified 80/20 `random_state=42`, split before any fit —
   refit is deterministic, so `build_full_pipeline(5)` on the same split
   reproduces the champion's weights exactly. `X` excludes `code`
@@ -231,7 +242,8 @@ and cut order are in PRD §3 and Hard rule 6.
   `mlruns/` + `mlflow.db` as committed = 19 MB and contain everything
   grading needs (metrics, confusion matrices, SHAP plots, registry).
 - **Packaged artifact (Stage 5, as built):** `python src/package.py` →
-  `models/model.joblib` (17.3 MB) + `models/training_reference.csv`
+  `models/model.joblib` (17.7 MB, Gen-3 champion) +
+  `models/training_reference.csv`
   (19,998 × 20, git-committed, NaN-preserving, no `code`/`nova_group` —
   the live input space for Stage 12 KS drift checks). Source of the
   dump: `mlflow.sklearn.load_model("models:/chewsy-nova@champion")`, so
@@ -265,15 +277,22 @@ and cut order are in PRD §3 and Hard rule 6.
   for the predicted class (NOVA p → adapter column p−1). Also
   `GET /health`, `GET /metrics` (in-memory counters), CORS origins from
   env `FRONTEND_ORIGINS` (default `http://localhost:3000`). **Three Hard
-  rule 11 guards:** `off_client.strip_forbidden` → `normalize_live_row`
-  asserts → `score_row` asserts. Response fields `predicted_nova` /
-  `confidence` / `shap_top_features` + `product_name`/`image_url` (for
-  Stage 7.5) — never OFF's label. Tests `tests/test_api.py` (17): zero
-  network by default (fixture `tests/fixtures/off_product_3017620422003.json`
-  deliberately keeps `nova_group`+Nutri-Score to prove stripping); live
-  e2e gated by `CHEWSY_LIVE_OFF=1`. Batch: `python src/batch_predict.py
-  --input b.csv --output p.csv` (reuses `score_row`, per-row error
-  isolation). Dep added: `httpx==0.28.1` (fastapi TestClient).
+   rule 11 guards:** `off_client.strip_forbidden` → `normalize_live_row`
+   asserts → `score_row` asserts. Response fields `predicted_nova` /
+   `confidence` / `shap_top_features` + `product_name`/`image_url` (for
+   Stage 7.5) — never OFF's label. **Sparse honesty (PRD 6.8):**
+   `data_sparse: bool` — `is_sparse_input` on the raw extracted row
+   *before* Stage 2 clean (`build_feature_frame` → `(frame, bool)` with
+   an assert the flag never lands in feature columns); when true the UI
+   forces a "Low information" tier and the headline says "Not enough
+   information to classify processing". Tests `tests/test_api.py` (35):
+   zero network by default (fixture `tests/fixtures/off_product_3017620422003.json`
+   deliberately keeps `nova_group`+Nutri-Score to prove stripping) +
+   `TestDataSparse`; live
+   e2e gated by `CHEWSY_LIVE_OFF=1`. Batch: `python src/batch_predict.py
+   --input b.csv --output p.csv` (reuses `score_row`, per-row error
+   isolation, `data_sparse` output column). Dep added: `httpx==0.28.1`
+   (fastapi TestClient).
 - **Evidence:** `python src/features.py` prints skew/filter/PCA/SVD
   numbers. Full evidence log: `docs/data_quality_report.md` —
   **local-only** (listed in `.git/info/exclude`): append each stage's
@@ -306,6 +325,7 @@ dvc add models/model.joblib && dvc push
 
 # Experiment tracking (Stage 4)
 python src/train.py --runs 1 2 3 4 5 6   # six tracked runs
+python src/train.py --sweep 0 0.1 0.2 0.3 # text-dropout rate sweep (tracked runs)
 python src/train.py --register           # winner → alias 'champion'
 mlflow ui   # sqlite:///mlflow.db
 
