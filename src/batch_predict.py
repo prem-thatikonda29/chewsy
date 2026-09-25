@@ -17,6 +17,7 @@ message instead of aborting the batch.
 from __future__ import annotations
 
 import argparse
+import re
 import sys
 import time
 from pathlib import Path
@@ -29,8 +30,10 @@ import pandas as pd  # noqa: E402
 
 from app import off_client  # noqa: E402
 from app.main import build_feature_frame, load_pipeline, score_row  # noqa: E402
+from app.schemas import NOVA_LABELS  # noqa: E402
 
 BARCODE_COL = "barcode"
+BARCODE_PATTERN = r"^\d{6,14}$"  # same contract as the API's PredictRequest
 OUTPUT_COLS = [
     "barcode", "product_name", "predicted_nova", "nova_label",
     "confidence", "error",
@@ -38,7 +41,14 @@ OUTPUT_COLS = [
 
 
 def score_one(pipeline, barcode: str) -> dict:
-    """Score a single barcode; failures become an ``error`` string."""
+    """Score a single barcode; ANY failure becomes an ``error`` string.
+
+    Per-row isolation is deliberately broad: one malformed product payload
+    (a joined list that isn't iterable, a non-numeric nutriment, ...) must
+    never abort the batch and discard rows already scored (PRD 6.5).
+    """
+    import re
+
     from app.schemas import NOVA_LABELS
 
     base = {
@@ -49,6 +59,9 @@ def score_one(pipeline, barcode: str) -> dict:
         "confidence": pd.NA,
         "error": "",
     }
+    if not re.fullmatch(BARCODE_PATTERN, barcode):
+        base["error"] = "invalid barcode (expected 6-14 digits)"
+        return base
     try:
         product = off_client.fetch_product(barcode)
         df = build_feature_frame(barcode, product)
@@ -60,12 +73,11 @@ def score_one(pipeline, barcode: str) -> dict:
             confidence=round(float(proba[pred - 1]), 4),
         )
         return base
-    except (
-        off_client.ProductNotFound,
-        off_client.OffAPIUnavailable,
-        AssertionError,
-    ) as exc:
-        base["error"] = str(exc)
+    except Exception as exc:
+        if isinstance(exc, (off_client.ProductNotFound, off_client.OffAPIUnavailable)):
+            base["error"] = str(exc)
+        else:
+            base["error"] = f"{type(exc).__name__}: {exc}"
         return base
 
 

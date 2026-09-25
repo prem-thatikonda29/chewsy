@@ -88,6 +88,7 @@ def score_row(pipeline, df: pd.DataFrame) -> tuple[int, np.ndarray]:
     pred = int(pipeline.predict(df)[0])
     proba = np.asarray(pipeline.predict_proba(df)[0], dtype=float)
     assert pred in (1, 2, 3, 4), f"model returned non-NOVA label: {pred}"
+    assert len(proba) == 4, f"expected 4 class probabilities, got {len(proba)}"
     return pred, proba
 
 
@@ -209,7 +210,9 @@ def predict(req: PredictRequest) -> PredictResponse:
 
         return PredictResponse(
             barcode=req.barcode,
-            product_name=(product.get("product_name") or "").strip(),
+            # normalized by clean() (HTML-unescaped/stripped) — Stage 7.5
+            # renders this directly, so echo the cleaned form, not raw OFF
+            product_name=str(df["product_name"].iloc[0]),
             image_url=product.get("image_front_url") or product.get("image_url"),
             predicted_nova=pred,
             nova_label=NOVA_LABELS[pred],
@@ -222,6 +225,13 @@ def predict(req: PredictRequest) -> PredictResponse:
     except HTTPException:
         METRICS["errors"] += 1
         raise
+    except AssertionError as exc:
+        # surface guard failures (leak tripwire etc.) instead of an opaque
+        # 500 — the message only exists in server logs otherwise
+        METRICS["errors"] += 1
+        raise HTTPException(
+            status_code=500, detail=f"prediction guard failed: {exc}"
+        ) from exc
     except Exception:
         METRICS["errors"] += 1
         raise

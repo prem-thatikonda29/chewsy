@@ -623,6 +623,15 @@ matches what the champion was packaged with.
   mirrors Stage 1's `flatten_hit()` mapping (`energy-kcal_100g` kcal, not
   the kJ `energy_100g`; comma-joined `categories_tags`; tag-derived
   pseudo-text) so live rows look like training rows.
+  **Code-review fixes (25 Sep):** (a) multi-brand plain strings
+  (`"Nutella, Ferrero"`) are cut to the first segment so live brands land
+  in the training `FrequencyEncoder` vocab — measured 203/19,998 training
+  rows carry a comma; `nutella` ∈ vocab vs `nutella, ferrero` ∉, and the
+  old test asserted the skewed value; (b) any non-200 (429/5xx) and
+  malformed payload shapes now raise `OffAPIUnavailable` — a 429 body with
+  `{"status":0}` used to surface as a bogus 404, a list-typed `product`
+  as a 500; both paths now covered by 9 mocked-response tests that run
+  without the live gate.
 - [x] 6.2 `app/schemas.py`: Pydantic request/response models for
   `POST /predict` (input: barcode string; output: NOVA class, confidence,
   top SHAP features for this prediction). Field names/docstrings must
@@ -688,6 +697,10 @@ matches what the champion was packaged with.
   are a per-scan UI concern); per-barcode failures become an `error` column
   instead of aborting the batch. Live run over 4 barcodes: **3 scored +
   1 clean "not found" error**, ~0.5 s/barcode.
+  **Code-review fix:** per-row isolation widened to *any* `Exception`
+  (a malformed payload — e.g. non-iterable `categories_tags` — previously
+  killed the run and lost already-scored rows) + barcode-format validation
+  before anything is sent to OFF.
 - [x] 6.6 Commit: `feat: FastAPI prediction service + batch scoring script`.
 
 ### Stage 7 — Next.js Frontend

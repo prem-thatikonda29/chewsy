@@ -97,6 +97,20 @@ class TestLeakageGuards:
         for field in FORBIDDEN:
             assert field not in text, f"{field} leaked into the response"
 
+    def test_raw_unstripped_payload_is_still_clean(
+        self, client, raw_product, monkeypatch
+    ):
+        """Belt-and-braces: even if fetch_product handed back the payload
+        WITH nova_group (stripping bypassed), extract_feature_input's
+        whitelist keeps it out of the frame and the response."""
+        assert "nova_group" in raw_product
+        monkeypatch.setattr(
+            off_client, "fetch_product", lambda barcode: dict(raw_product)
+        )
+        body = _response_for(client)
+        assert "nova_group" not in json.dumps(body)
+        assert body["predicted_nova"] in (1, 2, 3, 4)
+
 
 class TestNormalization:
     """PRD Stage 6 handoff — live rows get the Stage 2 normalizations."""
@@ -112,7 +126,11 @@ class TestNormalization:
         assert live_row["energy_100g"] == 539
 
     def test_stage2_normalizations_applied(self, live_row):
-        assert live_row["brands"] == "nutella, ferrero"  # lowercased
+        # multi-brand "Nutella, Ferrero" -> first segment, matching how
+        # clean() parses the training data's list-repr ['Nutella', ...]
+        # ('nutella' is in the FrequencyEncoder vocab; the full comma
+        # string is not — train/serve parity, see extract_feature_input)
+        assert live_row["brands"] == "nutella"
         assert live_row["categories_tags"].startswith("en:breakfasts")
         assert live_row["additives_n"] == 2
         assert live_row["unknown_ingredients_n"] == 0
@@ -125,6 +143,81 @@ class TestNormalization:
         assert live_row["sodium_100g_was_missing"] == 0
         assert live_row["text_was_missing"] == 0
         assert live_row["nutrients_all_missing"] == 0
+
+
+class TestFetchProductClassification:
+    """Hard rule 5: the client's 404/503 mapping itself — tested WITHOUT
+    the live gate by faking ``requests.get`` (the /predict 404/503 tests
+    monkeypatch fetch_product and would never catch a regression here)."""
+
+    class _FakeResp:
+        def __init__(self, status_code=200, payload=None, json_raises=False):
+            self.status_code = status_code
+            self._payload = payload
+            self._json_raises = json_raises
+
+        def json(self):
+            if self._json_raises:
+                raise ValueError("not json")
+            return self._payload
+
+    @staticmethod
+    def _patch(monkeypatch, response):
+        if isinstance(response, Exception):
+            def _raise(*args, **kwargs):
+                raise response
+            monkeypatch.setattr(off_client.requests, "get", _raise)
+        else:
+            monkeypatch.setattr(off_client.requests, "get",
+                                lambda *a, **k: response)
+
+    def test_found_200_returns_stripped_product(self, monkeypatch, raw_product):
+        self._patch(monkeypatch, self._FakeResp(200, {"status": 1, "product": raw_product}))
+        product = off_client.fetch_product("3017620422003")
+        assert "nova_group" not in product
+        assert product["product_name"] == "Nutella"
+
+    def test_status_zero_200_is_not_found(self, monkeypatch):
+        self._patch(monkeypatch, self._FakeResp(200, {"status": 0}))
+        with pytest.raises(off_client.ProductNotFound):
+            off_client.fetch_product("0000000000000")
+
+    def test_http_404_is_not_found(self, monkeypatch):
+        self._patch(monkeypatch, self._FakeResp(404, {}))
+        with pytest.raises(off_client.ProductNotFound):
+            off_client.fetch_product("0000000000000")
+
+    def test_http_429_with_status_zero_body_is_unavailable_not_404(
+        self, monkeypatch
+    ):
+        # rate-limit bodies often carry {"status": 0} — must NOT read as
+        # "barcode not found" during a rate-limited demo
+        self._patch(monkeypatch, self._FakeResp(429, {"status": 0}))
+        with pytest.raises(off_client.OffAPIUnavailable):
+            off_client.fetch_product("3017620422003")
+
+    def test_http_500_is_unavailable(self, monkeypatch):
+        self._patch(monkeypatch, self._FakeResp(500, {}))
+        with pytest.raises(off_client.OffAPIUnavailable):
+            off_client.fetch_product("3017620422003")
+
+    def test_timeout_is_unavailable(self, monkeypatch):
+        import requests as requests_lib
+
+        self._patch(monkeypatch, requests_lib.Timeout("timed out"))
+        with pytest.raises(off_client.OffAPIUnavailable):
+            off_client.fetch_product("3017620422003")
+
+    def test_non_json_body_is_unavailable(self, monkeypatch):
+        self._patch(monkeypatch, self._FakeResp(200, json_raises=True))
+        with pytest.raises(off_client.OffAPIUnavailable):
+            off_client.fetch_product("3017620422003")
+
+    def test_product_wrong_type_is_unavailable(self, monkeypatch):
+        # product as a list must not escape as an unhandled 500
+        self._patch(monkeypatch, self._FakeResp(200, {"status": 1, "product": []}))
+        with pytest.raises(off_client.OffAPIUnavailable):
+            off_client.fetch_product("3017620422003")
 
 
 class TestHealthAndMetrics:
@@ -168,6 +261,26 @@ class TestPredict:
         assert body["predicted_nova"] == pred
         assert body["confidence"] == pytest.approx(float(proba[pred - 1]), abs=1e-4)
 
+    def test_shap_values_match_explainer_for_predicted_class(
+        self, client, fake_fetch, clean_product
+    ):
+        """Pin the class-index math (NOVA p -> adapter column p-1): a
+        regression using `pred` instead of `pred-1` must fail here."""
+        import numpy as np
+
+        body = _response_for(client)
+        pred = body["predicted_nova"]
+        df = build_feature_frame(KNOWN_BARCODE, clean_product)
+        transformed = STATE["pipeline"].named_steps["feature_pipeline"].transform(df)
+        values = STATE["explainer"](transformed).values
+        if isinstance(values, list):
+            values = np.stack(values, axis=-1)
+        contrib = np.asarray(values)[0, :, pred - 1]
+        names = STATE["feature_names"]
+        for f in body["shap_top_features"]:
+            expected = round(float(contrib[names.index(f["feature"])]), 4)
+            assert f["shap_value"] == pytest.approx(expected, abs=1e-4)
+
     def test_unknown_barcode_404(self, client, monkeypatch):
         def _raise(barcode):
             raise off_client.ProductNotFound(f"barcode {barcode} not found")
@@ -206,19 +319,21 @@ class TestBatchPredict:
 
         inp = tmp_path / "barcodes.csv"
         out = tmp_path / "preds.csv"
-        pd.DataFrame({"barcode": [KNOWN_BARCODE, "9999999999999"]}).to_csv(
-            inp, index=False
-        )
+        pd.DataFrame(
+            {"barcode": [KNOWN_BARCODE, "9999999999999", "not-a-barcode"]}
+        ).to_csv(inp, index=False)
         result = batch_run(inp, out)
 
         assert out.exists()
-        assert len(result) == 2
+        assert len(result) == 3
         good = result[result["error"] == ""].iloc[0]
-        bad = result[result["error"] != ""].iloc[0]
+        bad = result[result["error"].str.contains("not found")].iloc[0]
+        junk = result[result["barcode"] == "not-a-barcode"].iloc[0]
         assert int(good["predicted_nova"]) in (1, 2, 3, 4)
         assert 0 < float(good["confidence"]) <= 1
         assert "not found" in bad["error"]
         assert pd.isna(bad["predicted_nova"])
+        assert "invalid barcode" in junk["error"]  # validated, not sent to OFF
 
 
 @pytest.mark.skipif(
