@@ -42,12 +42,19 @@ export async function predict(barcode: string): Promise<PredictResponse> {
       body: JSON.stringify({ barcode }),
     });
   } catch {
-    // network-level failure (API down, offline) — distinct from a 503
-    throw new ScanError("unavailable", "API unreachable — check the backend is running.");
+    // network-level failure (offline, API down, CORS) — distinct from a 503
+    throw new ScanError(
+      "unavailable",
+      "We couldn't connect. Check your connection and try again."
+    );
   }
 
   if (res.status === 404) {
-    throw new ScanError("not_found", "Product not found in OFF.", 404);
+    throw new ScanError(
+      "not_found",
+      "We couldn't find this barcode — try another product.",
+      404
+    );
   }
   if (res.status === 422) {
     throw new ScanError("invalid", "Invalid barcode format.", 422);
@@ -55,12 +62,16 @@ export async function predict(barcode: string): Promise<PredictResponse> {
   if (res.status === 503 || res.status === 429 || res.status >= 500) {
     throw new ScanError(
       "unavailable",
-      "OFF unreachable — retry in a moment.",
+      "Couldn't reach the food database — try again in a moment.",
       res.status
     );
   }
   if (!res.ok) {
-    throw new ScanError("unknown", `Unexpected error (HTTP ${res.status}).`, res.status);
+    throw new ScanError(
+      "unknown",
+      "Something went wrong on our end — try again.",
+      res.status
+    );
   }
 
   return (await res.json()) as PredictResponse;

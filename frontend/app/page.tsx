@@ -32,9 +32,9 @@ interface HistoryEntry {
 const HISTORY_LIMIT = 10;
 
 const ERROR_COPY: Record<ScanErrorKind, { title: string; action: "retry" | "rescan" }> = {
-  not_found: { title: "Product not found in OFF", action: "rescan" },
-  unavailable: { title: "OFF unreachable — retry", action: "retry" },
-  invalid: { title: "Invalid barcode", action: "rescan" },
+  not_found: { title: "Product not found", action: "rescan" },
+  unavailable: { title: "Couldn't reach the food database", action: "retry" },
+  invalid: { title: "Not a valid barcode", action: "rescan" },
   unknown: { title: "Something went wrong", action: "retry" },
 };
 
@@ -119,7 +119,7 @@ export default function Home() {
             <div className="flex items-center gap-2 text-sm text-muted-foreground">
               <Loader2 className="size-4 animate-spin text-primary" aria-hidden="true" />
               Looking up <span className="font-mono">{screen.barcode}</span> —
-              fetching from Open Food Facts, then scoring with the frozen model…
+              fetching the label, then working out how it&rsquo;s made…
             </div>
             <div className="flex items-start gap-4">
               <Skeleton className="size-20 shrink-0 rounded-lg sm:size-24" />

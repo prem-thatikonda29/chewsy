@@ -43,7 +43,7 @@ export default function ProbabilityBars({
               {NOVA_LABELS[cls]}
               {isPredicted && (
                 <span className="ml-2 rounded-full border border-foreground/25 px-1.5 py-px text-[10px] font-semibold uppercase tracking-wide">
-                  predicted
+                  our call
                 </span>
               )}
             </span>

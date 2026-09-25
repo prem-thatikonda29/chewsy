@@ -1125,6 +1125,35 @@ anything requiring a second backend fetch.
   added; the capability is demonstrated live (stub 5000112644906 →
   NOVA 1 @ 0.81 post-fix with the honest framing — headline owns the
   gap, not the badge).
+- [x] 7.14 **Layman copy pass (user review 25 Sep 2026 — "too techy
+  language"):** on-screen text no longer names internals.
+  Result card: "How sure is the model?" → **"How sure are we?"**
+  (caption "all four levels" / "all four levels · little to go on" —
+  supersedes 7.13's "4-class distribution" caption wording),
+  "Why — what the model read" → **"Why we say this"** (caption "top 5
+  reasons for NOVA n"), "predicted" chip → **"our call"**,
+  "descriptor, not verdict" → **"not a health score"**, footer →
+  **"Chewsy's own verdict — worked out from this product's ingredients
+  and nutrients"**, tier chip one
+  decimal (**"Confident · 99.9%"** — was rounding 99.9 → "100%" next to
+  a 99.9% bar). SHAP chart footnote → "Honey bars push toward this
+  verdict… (Shown with SHAP, the standard way to explain a decision.)"
+  — the single SHAP mention kept for the course audience; tooltip
+  "SHAP value" → "push". Labels: SVD "Ingredient-text signal #21" →
+  **"Ingredient wording pattern #21"**; brand/category frequency labels
+  drop "training data". Loading screen drops "scoring with the frozen
+  model" → "fetching the label, then working out how it's made…".
+  Errors (title + detail): "OFF unreachable — retry" → **"Couldn't
+  reach the food database"**, "API unreachable — check the backend is
+  running." → **"We couldn't connect. Check your connection and try
+  again."**, "Product not found in OFF" → "Product not found" (+ detail
+  "We couldn't find this barcode — try another product.").
+  Follow-up rule (user, 25 Sep): **no "Open Food Facts"/"OFF" anywhere
+  in the UI at all** — site footer ("Chewsy works out how each product
+  is made — a description of processing, not a health score."), meta
+  description, SHAP caption, card footer, and error copy all scrubbed;
+  only an internal comment/README mention may name the source.
+  typecheck/lint/build green.
 
 ### Stage 8 — Containerization
 **Goal:** one image, both a Python and a Node runtime inside it — this is

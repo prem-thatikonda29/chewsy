@@ -1,6 +1,8 @@
 // PRD 7.5 — SHAP feature names are engineered column names
 // (num__additives_n, text__truncatedsvd9, ...); the chart shows humans
-// what the model actually reads, so they get humanized labels.
+// what the verdict was based on, so they get plain-language labels
+// (clarify pass 25 Sep 2026: no "model", "signal", or training-data
+// jargon on screen).
 
 const NUM_LABELS: Record<string, string> = {
   energy_100g: "Energy (kcal/100g)",
@@ -17,7 +19,7 @@ const NUM_LABELS: Record<string, string> = {
   unknown_ingredients_n: "Unrecognised ingredients (count)",
   fiber_100g_was_missing: "Fibre not reported",
   sodium_100g_was_missing: "Sodium not reported",
-  text_was_missing: "No ingredient text",
+  text_was_missing: "No ingredient list",
   nutrients_all_missing: "No nutrients reported",
   sugar_fiber_ratio: "Sugar-to-fibre ratio",
   sat_fat_fat_ratio: "Saturated-to-total fat ratio",
@@ -30,10 +32,10 @@ export function humanizeFeature(name: string): string {
   if (NUM_LABELS[num]) return NUM_LABELS[num];
 
   const svd = name.match(SVD_RE);
-  if (svd) return `Ingredient-text signal #${svd[1]}`;
+  if (svd) return `Ingredient wording pattern #${svd[1]}`;
 
-  if (name.startsWith("brand_freq__")) return "Brand commonness (training data)";
-  if (name.startsWith("cat_tagfreq__")) return "Category commonness (training data)";
+  if (name.startsWith("brand_freq__")) return "How common this brand is (our data)";
+  if (name.startsWith("cat_tagfreq__")) return "How common this category is (our data)";
 
   // fallback: strip a prefix, spaces for underscores
   const bare = name.replace(/^[a-z_]+__/, "");

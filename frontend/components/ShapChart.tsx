@@ -3,8 +3,10 @@
 // PRD 7.5 — "Why" section: top-5 SHAP contributions as a bar chart
 // (recharts), sign = toward/away from the predicted verdict, humanized
 // labels (num__additives_n → "Number of additives", text__truncatedsvd9 →
-// "Ingredient-text signal #9"). Real nutrients/frequencies/SVD — never
-// PCA, per Hard rule (SHAP must explain real features).
+// "Ingredient wording pattern #9"). Real nutrients/frequencies/SVD —
+// never PCA, per Hard rule (SHAP must explain real features). On-screen
+// copy stays layman (clarify pass 25 Sep 2026); SHAP named once in the
+// footnote for the course audience.
 
 import { useEffect, useState } from "react";
 import {
@@ -52,7 +54,7 @@ export default function ShapChart({ features }: ShapChartProps) {
   if (!features.length) {
     return (
       <p className="text-sm text-muted-foreground">
-        No feature contributions returned for this scan.
+        No reasons to show for this scan.
       </p>
     );
   }
@@ -68,7 +70,7 @@ export default function ShapChart({ features }: ShapChartProps) {
       <div
         className="h-[200px] w-full sm:h-[220px]"
         role="img"
-        aria-label="SHAP feature contributions chart"
+        aria-label="The strongest reasons for this verdict, bar chart"
       >
         <ResponsiveContainer width="100%" height="100%">
           <BarChart
@@ -92,7 +94,7 @@ export default function ShapChart({ features }: ShapChartProps) {
             <ReferenceLine x={0} stroke="var(--foreground)" strokeOpacity={0.4} />
             <Tooltip
               cursor={{ fill: "var(--muted)" }}
-              formatter={(value) => [fmt(Number(value)), "SHAP value"]}
+              formatter={(value) => [fmt(Number(value)), "push"]}
               contentStyle={{
                 borderRadius: 8,
                 border: "1px solid var(--border)",
@@ -120,8 +122,9 @@ export default function ShapChart({ features }: ShapChartProps) {
         </ResponsiveContainer>
       </div>
       <figcaption className="text-xs text-muted-foreground">
-        Positive (honey) pushes toward this NOVA class; negative (blue)
-        pushes away. Model SHAP values for this scan — not OFF data.
+        Honey bars push toward this verdict, blue bars push away —
+        Chewsy&rsquo;s own reading of the label. (Shown with SHAP, the
+        standard way to explain a decision.)
       </figcaption>
     </figure>
   );

@@ -15,7 +15,7 @@ const geistMono = Geist_Mono({
 export const metadata: Metadata = {
   title: "Chewsy — scan a barcode, see what's in it",
   description:
-    "Scan a grocery barcode: Chewsy predicts the NOVA processing level from ingredients and shows the nutrient traffic lights. A model verdict — not a copy of Open Food Facts.",
+    "Scan a grocery barcode: Chewsy works out how the food is made (NOVA 1–4) from its ingredients and shows the nutrient traffic lights — its own verdict.",
 };
 
 // Required over plain HTTP away from localhost: getUserMedia (the camera)
@@ -67,8 +67,9 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
         <main className="flex-1">{children}</main>
         <footer className="border-t border-border/70 py-4">
           <p className="mx-auto w-full max-w-3xl px-4 text-xs text-muted-foreground">
-            Chewsy predicts NOVA from Open Food Facts data. Descriptor, not
-            verdict — see the explainer on every result.
+            Chewsy works out how each product is made — a description of
+            processing, not a health score. See the explainer on every
+            result.
           </p>
         </footer>
       </body>

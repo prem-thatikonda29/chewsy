@@ -144,14 +144,14 @@ export default function ResultCard({ data, onScanAnother }: ResultCardProps) {
                 }
                 title={
                   data.data_sparse
-                    ? "This record has no ingredient list — too thin for a confident reading"
-                    : `Model confidence ${(data.confidence * 100).toFixed(1)}%`
+                    ? "This product has no ingredient list — too little to read confidently"
+                    : `How sure we are: ${(data.confidence * 100).toFixed(1)}%`
                 }
               >
                 <HelpCircle className="size-3.5" aria-hidden="true" />
                 {data.data_sparse
                   ? tier.word
-                  : `${tier.word} · ${(data.confidence * 100).toFixed(0)}%`}
+                  : `${tier.word} · ${(data.confidence * 100).toFixed(1)}%`}
               </span>
             </div>
           </div>
@@ -179,8 +179,8 @@ export default function ResultCard({ data, onScanAnother }: ResultCardProps) {
                   Not enough information to classify
                 </span>
                 <p className="text-xs text-muted-foreground">
-                  No ingredient list, tags or counts on this record. The
-                  model&rsquo;s reading below comes from nutrients alone.
+                  No ingredient list, tags or counts for this product — the
+                  reading below is based on nutrients alone.
                 </p>
               </>
             ) : (
@@ -214,11 +214,11 @@ export default function ResultCard({ data, onScanAnother }: ResultCardProps) {
         {/* 3 — Probability distribution: ambiguity made visible. */}
         <Well as="section" className="flex flex-col gap-3" aria-label="Class probabilities">
           <SectionHead
-            title="How sure is the model?"
+            title="How sure are we?"
             caption={
               data.data_sparse
-                ? "4-class distribution · thin input"
-                : "4-class distribution"
+                ? "all four levels · little to go on"
+                : "all four levels"
             }
           />
           <ProbabilityBars
@@ -230,8 +230,8 @@ export default function ResultCard({ data, onScanAnother }: ResultCardProps) {
         {/* 4 — Why: SHAP top features. */}
         <Well as="section" className="flex flex-col gap-3" aria-label="Why this prediction">
           <SectionHead
-            title="Why — what the model read"
-            caption={`top 5 signals for NOVA ${nova}`}
+            title="Why we say this"
+            caption={`top 5 reasons for NOVA ${nova}`}
           />
           <ShapChart features={data.shap_top_features} />
         </Well>
@@ -299,7 +299,7 @@ export default function ResultCard({ data, onScanAnother }: ResultCardProps) {
 
         {/* 6 — NOVA explainer: always visible, descriptor-not-verdict. */}
         <Well as="section" className="flex flex-col gap-2" aria-label="About NOVA">
-          <SectionHead title="What NOVA means" caption="descriptor, not verdict" />
+          <SectionHead title="What NOVA means" caption="not a health score" />
           <p className="text-sm leading-relaxed text-muted-foreground">
             NOVA describes how a food is made, not how nutritious it is. NOVA 1
             is unprocessed or minimally processed; NOVA 4 is ultra-processed —
@@ -311,8 +311,8 @@ export default function ResultCard({ data, onScanAnother }: ResultCardProps) {
         {/* 7 — Footer microcopy (pitch credibility) + reset. */}
         <footer className="flex flex-col items-start gap-3">
           <p className="text-xs text-muted-foreground">
-            Chewsy model verdict — computed from ingredients, not copied from
-            OFF.
+            Chewsy&rsquo;s own verdict — worked out from this
+            product&rsquo;s ingredients and nutrients.
           </p>
           <Button onClick={onScanAnother}>
             <RefreshCw className="size-4" /> Scan another
