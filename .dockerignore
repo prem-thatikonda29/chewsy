@@ -1,0 +1,35 @@
+# Build-context hygiene — keeps the image build fast and free of secrets/grading artifacts.
+.git
+.github
+.venv
+.gitignore
+
+# Grading/evidence — never needed inside the image
+mlruns/
+mlflow.db
+docs/
+Chewsy_PRD_Roadmap.md
+AGENTS.md
+README.md
+tests/
+conftest.py
+dvc.yaml
+dvc.lock
+
+# Data (DVC) — training CSVs are not served
+data/
+
+# Models: bake ONLY model.joblib (copied explicitly); pointer/reference not needed
+models/*.dvc
+models/training_reference.csv
+
+# Frontend build state — Stage A does a clean `npm ci` + build
+frontend/node_modules/
+frontend/.next/
+frontend/tsconfig.tsbuildinfo
+frontend/AGENTS.md
+frontend/CLAUDE.md
+
+# Python cruft
+**/__pycache__/
+*.pyc

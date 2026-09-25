@@ -1131,21 +1131,59 @@ anything requiring a second backend fetch.
 the one place the stack swap actually adds real complexity, budget extra
 time here.
 
-- [ ] 8.1 **Multi-stage `Dockerfile`:**
+- [x] 8.1 **Multi-stage `Dockerfile`:**
   - Stage A (`node:20-slim`): `COPY frontend/`, `npm install`, `npm run build`
     → produces a production Next.js build.
   - Stage B (`python:3.11-slim`): install Python deps (`COPY
     requirements.txt` before app code, for layer caching), **also install
     Node.js runtime** (needed to run `next start`, not just to build),
     `COPY` the built frontend output from Stage A, `COPY` the FastAPI app.
-- [ ] 8.2 `entrypoint.sh`: start `uvicorn` on `:8000`, poll `/health` until
+  ✅ Built as specified, with three recorded decisions:
+  1. **Base is `python:3.12-slim`, not 3.11** — evidence: pip build
+     failed on 3.11 with *"shap==0.52.0 Requires-Python >=3.12"* (the
+     Stage 0.3 pin); host Python is 3.12 too. Node 20 runtime via
+     NodeSource apt repo (Debian's own nodejs is 18, below Next 16's
+     floor); Stage A also runs `npm prune --omit=dev` after build so
+     only runtime deps ship.
+  2. **Model baked into the image** (`COPY models/model.joblib` —
+     approved 25 Sep 2026): self-contained demo image; fresh clones and
+     CI must `dvc pull` **before** `docker build` (comment at top of the
+     Dockerfile says so; Stage 9's workflow does exactly this).
+  3. **`NEXT_PUBLIC_API_URL=http://localhost:8000` as a build ARG** —
+     Next inlines `NEXT_PUBLIC_*` at build time; the browser reaches the
+     API on the host-mapped port. Plus a new **`.dockerignore`**
+     (excludes `.venv/`, `mlruns/` 77 MB, `data/`, `docs/`, git,
+     `frontend/node_modules`, `.next`) — without it the build context
+     would ship the whole ML history.
+- [x] 8.2 `entrypoint.sh`: start `uvicorn` on `:8000`, poll `/health` until
   it responds, then start `next start` on `:3000`. Both must stop together
   on `SIGTERM`.
-- [ ] 8.3 Local test: `docker build` + `docker run`, hit both ports from the
+  ✅ PID-1 bash script: `trap shutdown TERM INT` kills uvicorn **and**
+  `node …/next start` together; health poll via `curl` (installed in
+  Stage B) retries 60×1s and exits non-zero if the API never comes up;
+  `wait -n` supervises — if either child dies on its own, the other is
+  torn down too.
+- [x] 8.3 Local test: `docker build` + `docker run`, hit both ports from the
   host.
   **Done when:** a barcode scanned through the containerized frontend
   returns a real prediction end-to-end, not just "container starts."
-- [ ] 8.4 Commit: `feat: Docker containerization`.
+  ✅ Runtime: **Colima** (`colima start --cpu 4 --memory 4 --disk 40`,
+  macOS Virtualization.Framework, docker 29.5.2 arm64) — approved choice
+  over Docker Desktop (lighter, CLI-only, fits 8 GB host). Evidence:
+  `docker build -t chewsy .` succeeds (frontend stage cached on
+  rebuild); `docker run -p 8000:8000 -p 3000:3000` → `/health`
+  `{"status":"ok","model_loaded":true}` (44 features, explainer ready),
+  `GET :3000/` 200, live `POST /predict` on the sparse stub →
+  NOVA 1 @ 0.81 with `data_sparse:true`. **Done-when met:** the full
+  33-check headless-Chrome harness run against the *containerized*
+  frontend (local dev servers stopped first, ports 8000/3000 owned by
+  the container) → **33/33 PASS**, zero unexpected console/network
+  errors — scans through the UI hit the container's own API and return
+  real predictions (incl. the sparse forced-tier path). SIGTERM:
+  `docker stop` → exit 0 in <1s, uvicorn graceful shutdown in logs,
+  `docker start` recovers healthy.
+- [x] 8.4 Commit: `feat: Docker containerization`.
+  ✅ Committed with `Dockerfile`, `entrypoint.sh`, `.dockerignore` + this note.
 
 ### Stage 9 — CI/CD to Docker Hub
 - [ ] 9.1 `.github/workflows/ci.yml`: on every push — run `pytest`, then (only
