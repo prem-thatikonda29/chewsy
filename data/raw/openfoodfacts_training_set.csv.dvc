@@ -1,5 +1,0 @@
-outs:
-- md5: ade7bde6adefa3fb1c2e46a5cfe80ea2
-  size: 7300060
-  hash: md5
-  path: openfoodfacts_training_set.csv

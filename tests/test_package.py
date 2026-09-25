@@ -5,6 +5,7 @@ import sys
 from pathlib import Path
 
 import pandas as pd
+import yaml
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 MODEL_PATH = REPO_ROOT / "models" / "model.joblib"
@@ -53,8 +54,20 @@ class TestPackagedModel:
         assert result.stdout.strip().startswith("preds")
 
     def test_model_is_dvc_tracked_for_fresh_clones(self):
+        """Stage 10 contract: the model is a pipeline out, not a static
+        pointer — fresh clones restore it with `dvc pull` from dvc.lock."""
         assert MODEL_PATH.exists(), "missing — run: python src/package.py"
-        assert POINTER_PATH.exists(), "missing — run: dvc add models/model.joblib"
+        assert not POINTER_PATH.exists(), (
+            "static *.dvc pointer must be gone (AGENTS: dvc remove before "
+            "pipeline outs claim the same file)"
+        )
+        dvc_yaml = yaml.safe_load((REPO_ROOT / "dvc.yaml").read_text())
+        assert "models/model.joblib" in dvc_yaml["stages"]["train"]["outs"]
+        dvc_lock = yaml.safe_load((REPO_ROOT / "dvc.lock").read_text())
+        locked_outs = dvc_lock["stages"]["train"]["outs"]
+        assert any(o["path"] == "models/model.joblib" for o in locked_outs), (
+            "dvc.lock missing the model out — `dvc pull` would not restore it"
+        )
 
 
 class TestTrainingReference:

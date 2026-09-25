@@ -1,0 +1,50 @@
+# Stage 10 — the Stages 1–5 data/model pipeline as one re-runnable graph.
+#
+# mlflow.db, mlruns/ and models/training_reference.csv stay GIT-managed
+# (grading evidence — AGENTS.md), so they are deliberately not outs here;
+# package.py also reads the live MLflow registry (its state is the
+# committed mlflow.db). Deps are declared per-stage from what each cmd
+# actually reads — no decorative deps.
+stages:
+  fetch:
+    cmd: python src/fetch_training_set.py
+    deps:
+      - src/fetch_training_set.py
+      - src/params.py
+    params:
+      - params.yaml:
+          - fetch.target_per_class
+    outs:
+      - data/raw/openfoodfacts_training_set.csv
+  clean:
+    cmd: python src/clean.py
+    deps:
+      - src/clean.py
+      - data/raw/openfoodfacts_training_set.csv
+    outs:
+      - data/processed/openfoodfacts_clean.csv
+  features:
+    cmd: python src/features.py
+    deps:
+      - src/features.py
+      - src/params.py
+      - data/processed/openfoodfacts_clean.csv
+    params:
+      - params.yaml:
+          - features.n_svd_components
+  train:
+    # six tracked runs → register winner as alias 'champion', then package
+    # registry champion → models/model.joblib + training_reference.csv
+    cmd: python src/train.py --runs 1 2 3 4 5 6 --register && python src/package.py
+    deps:
+      - src/train.py
+      - src/features.py
+      - src/params.py
+      - src/package.py
+      - data/processed/openfoodfacts_clean.csv
+    params:
+      - params.yaml:
+          - features.n_svd_components
+          - train.text_dropout_frac
+    outs:
+      - models/model.joblib

@@ -65,6 +65,7 @@ from src.features import (  # noqa: E402
     NovaLabelAdapter,
     build_feature_pipeline,
 )
+from src.params import get  # noqa: E402
 
 # --- MLflow setup (PRD 4.1) -------------------------------------------------
 mlflow.set_tracking_uri("sqlite:///mlflow.db")
@@ -133,7 +134,9 @@ SHAP_BACKGROUND_ROWS = 200
 # instead of the class-2-only prior. The eval split is never augmented
 # (run_experiment takes train slices only; a hash tripwire asserts the
 # eval frame is unchanged). Rate is a logged param, swept via --sweep.
-AUGMENT_TEXT_DROPOUT = 0.20  # selected rate; --sweep measures 0/10/20/30%
+AUGMENT_TEXT_DROPOUT = float(
+    get("train", "text_dropout_frac", 0.20)
+)  # selected rate; --sweep measures 0/10/20/30% (params.yaml#train.text_dropout_frac)
 
 
 def augment_text_dropout(
@@ -225,6 +228,7 @@ def build_full_pipeline(run_no: int) -> Pipeline:
     features = build_feature_pipeline(
         include_text=cfg["include_text"],
         include_categorical=cfg["include_categorical"],
+        n_svd_components=int(get("features", "n_svd_components", 25)),
     )
     return Pipeline([
         ("feature_pipeline", features),

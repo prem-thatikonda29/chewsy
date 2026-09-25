@@ -586,4 +586,18 @@ def run_diagnostics(
 
 
 if __name__ == "__main__":
-    run_diagnostics()
+    # Stage 10: the evidence run reads the DVC-tracked SVD count so
+    # `dvc repro` re-runs this stage when features.n_svd_components
+    # changes (import inside __main__: library imports above stay
+    # importable from tests without the repo-root bootstrap).
+    import sys as _sys
+    from pathlib import Path as _Path
+
+    _root = _Path(__file__).resolve().parents[1]
+    if str(_root) not in _sys.path:
+        _sys.path.insert(0, str(_root))
+    from src.params import get as _get
+
+    run_diagnostics(
+        n_svd_components=int(_get("features", "n_svd_components", 25))
+    )

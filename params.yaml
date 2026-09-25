@@ -1,0 +1,11 @@
+# Stage 10 — DVC-tracked pipeline parameters (single source of truth).
+# Each dvc.yaml stage declares ONLY the keys it reads, so changing a
+# value re-runs exactly the stages downstream of it. Scripts fall back
+# to these same defaults on direct runs; `dvc repro` fails fast if a
+# declared key is removed.
+fetch:
+  target_per_class: 5000    # rows per NOVA class (20k total); API caps paging at 10000/class
+features:
+  n_svd_components: 25      # TruncatedSVD components in the text branch (Stage 3 evidence)
+train:
+  text_dropout_frac: 0.20   # Gen-3 sparse-view augmentation rate (swept in PRD 4.5)

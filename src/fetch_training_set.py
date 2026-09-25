@@ -27,11 +27,22 @@ Usage:
 
 import json
 import os
+import sys
 import time
 import urllib.parse
 import urllib.request
+from pathlib import Path
 
-TARGET_PER_CLASS = 5000      # 20k rows total; API caps paging at 10000/class
+REPO_ROOT = Path(__file__).resolve().parents[1]
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
+
+from src.params import get  # noqa: E402  (repo root on sys.path above)
+
+# Stage 10: rows per class from params.yaml#fetch.target_per_class (20k
+# total); API caps paging at 10000/class. Default matches params.yaml
+# for direct runs outside the DVC pipeline.
+TARGET_PER_CLASS = int(get("fetch", "target_per_class", 5000))
 PAGE_SIZE = 200               # confirmed working ceiling for this API
 OUT_PATH = "data/raw/openfoodfacts_training_set.csv"
 USER_AGENT = "Chewsy-CourseProject/1.0 (student project)"

@@ -6,6 +6,7 @@ fastapi==0.141.1
 uvicorn==0.53.0
 mlflow==3.16.1
 dvc[s3]==3.67.1
+PyYAML==6.0.3            # params.yaml reader (src/params.py, Stage 10)
 shap==0.52.0
 matplotlib==3.11.2
 xgboost==3.4.1

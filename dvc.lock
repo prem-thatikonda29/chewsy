@@ -1,0 +1,88 @@
+schema: '2.0'
+stages:
+  fetch:
+    cmd: python src/fetch_training_set.py
+    deps:
+    - path: src/fetch_training_set.py
+      hash: md5
+      md5: a32c6c964a302e7676e83d685af8db65
+      size: 6178
+    - path: src/params.py
+      hash: md5
+      md5: 57177f3b1ccf961f04d1bc732f941da7
+      size: 1116
+    params:
+      params.yaml:
+        fetch.target_per_class: 5000
+    outs:
+    - path: data/raw/openfoodfacts_training_set.csv
+      hash: md5
+      md5: ade7bde6adefa3fb1c2e46a5cfe80ea2
+      size: 7300060
+  clean:
+    cmd: python src/clean.py
+    deps:
+    - path: data/raw/openfoodfacts_training_set.csv
+      hash: md5
+      md5: ade7bde6adefa3fb1c2e46a5cfe80ea2
+      size: 7300060
+    - path: src/clean.py
+      hash: md5
+      md5: c7075a8f8b533fb92cf9a95724bd8d0d
+      size: 20338
+    outs:
+    - path: data/processed/openfoodfacts_clean.csv
+      hash: md5
+      md5: f3ecb2cff6bc49435c59a831bf95f6af
+      size: 7575144
+  features:
+    cmd: python src/features.py
+    deps:
+    - path: data/processed/openfoodfacts_clean.csv
+      hash: md5
+      md5: f3ecb2cff6bc49435c59a831bf95f6af
+      size: 7575144
+    - path: src/features.py
+      hash: md5
+      md5: 1773512d6beb3dde6ec0e159511f2d11
+      size: 25837
+    - path: src/params.py
+      hash: md5
+      md5: 57177f3b1ccf961f04d1bc732f941da7
+      size: 1116
+    params:
+      params.yaml:
+        features.n_svd_components: 25
+  train:
+    cmd: python src/train.py --runs 1 2 3 4 5 6 --register && python 
+      src/package.py
+    deps:
+    - path: data/processed/openfoodfacts_clean.csv
+      hash: md5
+      md5: f3ecb2cff6bc49435c59a831bf95f6af
+      size: 7575144
+    - path: src/features.py
+      hash: md5
+      md5: 1773512d6beb3dde6ec0e159511f2d11
+      size: 25837
+    - path: src/package.py
+      hash: md5
+      md5: 6f71fc420eb754a3d8b4bc2e8557a3bd
+      size: 2798
+    - path: src/params.py
+      hash: md5
+      md5: 57177f3b1ccf961f04d1bc732f941da7
+      size: 1116
+    - path: src/train.py
+      hash: md5
+      md5: 96b194858a8cb3f207794868c24de3af
+      size: 26702
+    params:
+      params.yaml:
+        features.n_svd_components: 25
+        train.text_dropout_frac: 0.2
+    outs:
+    - path: models/model.joblib
+      hash: md5
+      md5: 5ef31f466faddef2ecf568d4724f0baa
+      size: 17669223
