@@ -317,7 +317,7 @@ and cut order are in PRD §3 and Hard rule 6.
   re-run the mlflow-path relativize (commit 3da0c3f) before pushing if a
   register ever ships.
 - **Cloud deploy (Stage 11, adapted — no AWS):** UI
-  `https://frontend-fawn-five-70.vercel.app` (Vercel, HTTPS → camera
+  `https://chewsy-scanner.vercel.app` (Vercel, HTTPS → camera
   works) → API `https://chewsy-api.onrender.com` (Render free,
   `runtime: image` from the CI-pushed Docker Hub image, `APP_MODE=api`,
   credential `dockerhub-chewsy`). Never build the image from the repo

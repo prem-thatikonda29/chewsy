@@ -1305,11 +1305,11 @@ sequence of scripts you happened to run in order.
   self-buildable — the Blueprint/image-pull path is the only correct one.
 - [x] 11.2 `docker run --restart unless-stopped` pulling the Docker Hub
   image. **Adapted done-when met:** UI reachable from a browser at
-  **https://frontend-fawn-five-70.vercel.app** (public URL, not
+  **https://chewsy-scanner.vercel.app** (public URL, not
   localhost) → API **https://chewsy-api.onrender.com**.
   Verified server-side: `/health` `{"status":"ok","model_loaded":true}`;
   preflight 200 with
-  `access-control-allow-origin: https://frontend-fawn-five-70.vercel.app`
+  `access-control-allow-origin: https://chewsy-scanner.vercel.app`
   (CORS env `FRONTEND_ORIGINS` set via render.yaml push + Blueprint
   sync + manual redeploy — the app reads origins once at startup, so an
   env change needs a restart); live `POST /predict` from Render's
