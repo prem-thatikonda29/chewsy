@@ -132,8 +132,14 @@ class HealthResponse(BaseModel):
 
 
 class MetricsResponse(BaseModel):
-    """Simple in-memory counters (PRD 6.3 -- project-scope, no Prometheus)."""
+    """Simple in-memory counters (PRD 6.3 -- project-scope, no Prometheus).
+
+    Stage 12.1 adds per-class prediction counts and a sparse-scan counter
+    so the endpoint can back the monitoring story, not just traffic totals.
+    """
 
     requests: int
     errors: int
     avg_latency_ms: float
+    per_class: dict[str, int]
+    sparse: int

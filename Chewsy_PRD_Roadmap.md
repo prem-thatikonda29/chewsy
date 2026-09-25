@@ -1363,8 +1363,24 @@ from the **NaN-preserving** clean CSV, so the KS comparison should also
 compare per-column **null fractions** (a documentation-drift signal is a
 null-rate change: OFF pages that stop recording fiber show up as a rising
 `fiber_100g` NaN share before any value distribution moves).
-- [ ] 12.1 At minimum: structured request logging in FastAPI (barcode,
+- [x] 12.1 At minimum: structured request logging in FastAPI (barcode,
   latency, predicted class) and a working `/metrics` endpoint.
+  **Done 25 Sep 2026 (TDD — 4 tests first, watched red):** one JSON line
+  per `/predict` on stdout via logger `chewsy` (`app/main.py`, emitted
+  from the handler's `finally` so error paths log too with
+  `predicted_nova: null`):
+  `{"event":"predict","barcode":"3017620422003","latency_ms":692.9,"status":200,"predicted_nova":4,"data_sparse":false}` —
+  verified live on uvicorn (stdout, not stderr: `basicConfig(stream=sys.stdout)`
+  guard because uvicorn never attaches a root handler, so INFO records
+  would otherwise be dropped by the last-resort handler; `propagate`
+  stays on so pytest `caplog` captures the same lines — Render's log
+  drain shows them as-is). `/metrics` extended beyond the minimum with
+  `per_class: {"1":n..}` + `sparse` counters (`MetricsResponse` gained
+  both fields) so the endpoint backs the monitoring slide:
+  `{"requests":1,"errors":0,"avg_latency_ms":692.88,"per_class":{"1":0,"2":0,"3":0,"4":1},"sparse":0}`.
+  Tests: `TestStructuredRequestLogging` (success line fields, 404 line
+  with null class, per-class increment, sparse increment on stub).
+  Suite 114 passed + 1 gated skip (was 110+1).
 - [ ] 12.2 If time allows: a small script comparing live-fetched nutrient
   distributions against `training_reference.csv` using `scipy.stats.ks_2samp`
   — even a single manual run of this, shown as a plot in your slides, is

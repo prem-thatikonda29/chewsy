@@ -20,8 +20,11 @@ Design points:
 from __future__ import annotations
 
 import html
+import json
+import logging
 import math
 import os
+import sys
 import time
 from collections.abc import Iterator
 from contextlib import asynccontextmanager
@@ -49,8 +52,23 @@ from src.nutrition_flags import build_scan_facts
 REPO_ROOT = Path(__file__).resolve().parents[1]
 MODEL_PATH = REPO_ROOT / "models" / "model.joblib"
 
+# Stage 12.1 -- one structured JSON line per /predict on stdout (Render
+# log drain picks it up; uvicorn's default log config never attaches a
+# handler to the root logger, so INFO records would be dropped by the
+# last-resort handler without this guard). propagate stays True so
+# pytest's caplog can capture the same records.
+logger = logging.getLogger("chewsy")
+if not logging.getLogger().handlers:
+    logging.basicConfig(level=logging.INFO, format="%(message)s", stream=sys.stdout)
+
 # in-memory counters (PRD 6.3 -- simple is fine for this scope)
-METRICS = {"requests": 0, "errors": 0, "latency_sum_ms": 0.0}
+METRICS = {
+    "requests": 0,
+    "errors": 0,
+    "latency_sum_ms": 0.0,
+    "per_class": {str(c): 0 for c in NOVA_LABELS},
+    "sparse": 0,
+}
 
 # loaded once at startup, read on every request
 STATE: dict = {"pipeline": None, "explainer": None, "feature_names": None}
@@ -217,11 +235,15 @@ def health() -> HealthResponse:
 
 @app.get("/metrics", response_model=MetricsResponse)
 def metrics() -> MetricsResponse:
-    """Request count, error count, average /predict latency (in-memory)."""
+    """Request/error counts, avg latency, per-class predictions, sparse scans."""
     n = METRICS["requests"]
     avg = METRICS["latency_sum_ms"] / n if n else 0.0
     return MetricsResponse(
-        requests=n, errors=METRICS["errors"], avg_latency_ms=round(avg, 2)
+        requests=n,
+        errors=METRICS["errors"],
+        avg_latency_ms=round(avg, 2),
+        per_class=dict(METRICS["per_class"]),
+        sparse=METRICS["sparse"],
     )
 
 
@@ -234,6 +256,9 @@ def predict(req: PredictRequest) -> PredictResponse:
     """
     start = time.perf_counter()
     METRICS["requests"] += 1
+    pred: int | None = None
+    data_sparse: bool | None = None
+    status = 200
     try:
         try:
             product = off_client.fetch_product(req.barcode)
@@ -279,18 +304,38 @@ def predict(req: PredictRequest) -> PredictResponse:
             ingredients_n=_as_int(row.get("ingredients_n")),
             ingredients_text=ingredients_text,
         )
-    except HTTPException:
+    except HTTPException as exc:
         METRICS["errors"] += 1
+        status = exc.status_code
         raise
     except AssertionError as exc:
         # surface guard failures (leak tripwire etc.) instead of an opaque
         # 500 — the message only exists in server logs otherwise
         METRICS["errors"] += 1
+        status = 500
         raise HTTPException(
             status_code=500, detail=f"prediction guard failed: {exc}"
         ) from exc
     except Exception:
         METRICS["errors"] += 1
+        status = 500
         raise
     finally:
-        METRICS["latency_sum_ms"] += (time.perf_counter() - start) * 1000
+        elapsed_ms = (time.perf_counter() - start) * 1000
+        METRICS["latency_sum_ms"] += elapsed_ms
+        if status == 200 and pred is not None:
+            METRICS["per_class"][str(pred)] += 1
+            METRICS["sparse"] += int(data_sparse is True)
+        # Stage 12.1 -- structured request log (barcode, latency, class)
+        logger.info(
+            json.dumps(
+                {
+                    "event": "predict",
+                    "barcode": req.barcode,
+                    "latency_ms": round(elapsed_ms, 1),
+                    "status": status,
+                    "predicted_nova": pred,
+                    "data_sparse": data_sparse,
+                }
+            )
+        )

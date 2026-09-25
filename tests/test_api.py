@@ -8,6 +8,7 @@ path is available behind `CHEWSY_LIVE_OFF=1`.
 """
 
 import json
+import logging
 import os
 from pathlib import Path
 
@@ -266,6 +267,67 @@ class TestHealthAndMetrics:
         after = client.get("/metrics").json()
         assert after["requests"] == before["requests"] + 1
         assert after["avg_latency_ms"] >= 0
+
+
+class TestStructuredRequestLogging:
+    """PRD 12.1 — one structured JSON log line per /predict (barcode,
+    latency, predicted class) and per-class counters on /metrics."""
+
+    @staticmethod
+    def _predict_events(caplog) -> list[dict]:
+        events = []
+        for record in caplog.records:
+            try:
+                payload = json.loads(record.getMessage())
+            except (ValueError, TypeError):
+                continue
+            if isinstance(payload, dict) and payload.get("event") == "predict":
+                events.append(payload)
+        return events
+
+    def test_success_logs_barcode_latency_and_class(self, client, fake_fetch, caplog):
+        with caplog.at_level(logging.INFO, logger="chewsy"):
+            body = _response_for(client)
+        events = self._predict_events(caplog)
+        assert events, "no structured predict log line emitted"
+        last = events[-1]
+        assert last["barcode"] == KNOWN_BARCODE
+        assert last["latency_ms"] > 0
+        assert last["predicted_nova"] == body["predicted_nova"]
+        assert last["status"] == 200
+        assert last["data_sparse"] is False
+
+    def test_not_found_logs_null_class(self, client, monkeypatch, caplog):
+        def _raise(barcode):
+            raise off_client.ProductNotFound(f"barcode {barcode} not found")
+
+        monkeypatch.setattr(off_client, "fetch_product", _raise)
+        with caplog.at_level(logging.INFO, logger="chewsy"):
+            resp = client.post("/predict", json={"barcode": "9999999999999"})
+        assert resp.status_code == 404
+        events = self._predict_events(caplog)
+        assert events, "no structured predict log line on the 404 path"
+        last = events[-1]
+        assert last["barcode"] == "9999999999999"
+        assert last["status"] == 404
+        assert last["predicted_nova"] is None
+
+    def test_metrics_per_class_counter(self, client, fake_fetch):
+        body = _response_for(client)
+        after = client.get("/metrics").json()
+        assert "per_class" in after, "per-class counts missing from /metrics"
+        assert after["per_class"][str(body["predicted_nova"])] >= 1
+        assert after["per_class"].keys() == {"1", "2", "3", "4"}
+
+    def test_metrics_sparse_counter_increments_on_stub(self, client, monkeypatch):
+        product = stub_product()
+        monkeypatch.setattr(off_client, "fetch_product", lambda barcode: dict(product))
+        before = client.get("/metrics").json()
+        assert "sparse" in before, "sparse counter missing from /metrics"
+        resp = client.post("/predict", json={"barcode": STUB_BARCODE})
+        assert resp.status_code == 200
+        after = client.get("/metrics").json()
+        assert after["sparse"] == before["sparse"] + 1
 
 
 class TestPredict:
