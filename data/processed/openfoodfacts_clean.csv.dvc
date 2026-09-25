@@ -1,5 +1,5 @@
 outs:
-- md5: f6c2647fa8132e52d5109d901781aab7
-  size: 7611441
+- md5: 57b5319c69d25efea080e16c435104a5
+  size: 7515786
   hash: md5
   path: openfoodfacts_clean.csv

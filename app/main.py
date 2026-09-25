@@ -66,7 +66,8 @@ def load_pipeline(path: Path = MODEL_PATH):
 
 
 def _feature_names(pipeline) -> list[str]:
-    """Names for the 44 transformed columns -- same navigation as
+    """Names for the transformed columns (46 with the count-missingness
+    indicators) -- same navigation as
     src/train.py::feature_names (SHAP needs them for readable labels)."""
     ct = pipeline.named_steps["feature_pipeline"].named_steps["features"]
     return [str(n) for n in ct.get_feature_names_out()]
@@ -108,7 +109,7 @@ def score_row(pipeline, df: pd.DataFrame) -> tuple[int, np.ndarray]:
 def shap_top_features(pipeline, df: pd.DataFrame, pred: int, k: int = 5) -> list[ShapFeature]:
     """Top-k SHAP contributions to THIS prediction's predicted class.
 
-    Works on the transformed row (44 engineered features -- real nutrients,
+    Works on the transformed row (engineered features -- real nutrients,
     frequencies, SVD components; never PCA components, Hard rule from
     Stage 3). Class index: NovaLabelAdapter maps NOVA {1,2,3,4} -> {0,1,2,3},
     so NOVA ``pred`` lives at estimator column ``pred - 1``.

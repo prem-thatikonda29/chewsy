@@ -297,12 +297,18 @@ def clean(df: pd.DataFrame, verbose: bool = True) -> pd.DataFrame:
     # purpose -- see module docstring. Group-median imputation was moved to
     # src/features.py::GroupMedianImputer so it is fit on train rows only.
 
-    # Count/int columns: fill with 0 (absence of an additive count reads
-    # as "no additives reported" -> same as none) + keep Stage 3 numeric.
-    # Row-local and constant -- no statistics are learned from other rows,
-    # so this is not a leakage source and stays in Stage 2.
-    for col in ["additives_n", "ingredients_n", "unknown_ingredients_n"]:
-        df[col] = df[col].fillna(0)
+    # Count/int columns: MISSING COUNTS STAY NaN (changed 25 Sep 2026).
+    # They used to be fillna(0), which turned "OFF never reported an
+    # additive count" into "definitely zero additives". Sparse entries are
+    # exactly Chewsy's target population (unlabeled products), so the
+    # coercion erased the model's top NOVA-4 signals on the very rows the
+    # app exists to score -> confident NOVA 1/2 drift on energy drinks.
+    # NaN now flows to the Stage 3 imputer (GroupMedianImputer + the
+    # numeric branch's SimpleImputer both cover COUNT_COLS in
+    # src/features.py), and FeatureCreator derives the count-missingness
+    # indicators from this NaN state at transform time. Row-local: no
+    # statistics are learned from other rows here.
+    # (Counts are left untouched below -- no anomaly decision applies.)
 
     # --- text normalization (PRD 2.4) ----------------------------------
     # Lowercase, strip punctuation noise, collapse whitespace, unescape any
@@ -360,8 +366,9 @@ def normalize_live_row(raw: dict) -> dict:
     One source of truth: the API row gets the EXACT Stage 2 row-local
     normalizations the training data got (brand list-repr parse + lowercase,
     HTML-unescape, mass cap at 100 g, negatives/impossible energy -> NaN,
-    sat-fat > fat -> NaN, Atwater cross-check, count columns -> 0, text
-    normalization) -- applied here as ``clean(df, verbose=False)`` on a
+    sat-fat > fat -> NaN, Atwater cross-check, count columns kept NaN when
+    unreported, text normalization) -- applied here as
+    ``clean(df, verbose=False)`` on a
     one-row frame, never as a duplicated copy of the logic.
 
     What this deliberately does NOT do: impute NaNs -- that stays in the
