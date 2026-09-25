@@ -64,6 +64,14 @@ class PredictResponse(BaseModel):
     barcode: str
     product_name: str = ""
     image_url: str | None = None
+    data_sparse: bool = Field(
+        description="True when the OFF record is a STUB -- no ingredient "
+                    "list, no category tags, counts unpublished -- so the "
+                    "row the model scored was thin. The verdict is still "
+                    "MODEL-computed either way; the UI must present it as "
+                    "low-information when this is true (never shout a "
+                    "confidence the input cannot support)."
+    )
     predicted_nova: int = Field(
         description="MODEL-COMPUTED NOVA class (1-4). Not fetched from OFF."
     )

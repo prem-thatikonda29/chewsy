@@ -36,7 +36,7 @@ BARCODE_COL = "barcode"
 BARCODE_PATTERN = r"^\d{6,14}$"  # same contract as the API's PredictRequest
 OUTPUT_COLS = [
     "barcode", "product_name", "predicted_nova", "nova_label",
-    "confidence", "error",
+    "confidence", "data_sparse", "error",
 ]
 
 
@@ -57,6 +57,7 @@ def score_one(pipeline, barcode: str) -> dict:
         "predicted_nova": pd.NA,
         "nova_label": "",
         "confidence": pd.NA,
+        "data_sparse": pd.NA,
         "error": "",
     }
     if not re.fullmatch(BARCODE_PATTERN, barcode):
@@ -64,13 +65,14 @@ def score_one(pipeline, barcode: str) -> dict:
         return base
     try:
         product = off_client.fetch_product(barcode)
-        df = build_feature_frame(barcode, product)
+        df, data_sparse = build_feature_frame(barcode, product)
         pred, proba = score_row(pipeline, df)
         base.update(
             product_name=(product.get("product_name") or "").strip(),
             predicted_nova=pred,
             nova_label=NOVA_LABELS[pred],
             confidence=round(float(proba[pred - 1]), 4),
+            data_sparse=data_sparse,
         )
         return base
     except Exception as exc:

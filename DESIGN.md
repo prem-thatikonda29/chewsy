@@ -350,6 +350,11 @@ tool disappearing into the task.
   touch targets ≥44px on coarse pointers (WCAG 2.5.5).
 - **Do** state ambiguity honestly: "Borderline" tier when confidence
   <0.6 or the top-2 gap <15pts.
+- **Do** force a "Low information" tier when the API sets
+  `data_sparse` — never display a confidence percentage on a record
+  with no ingredient list (the number would be a lie by omission);
+  the processing axis says "not enough information to classify"
+  while nutrition chips keep rendering normally.
 
 ### Don't:
 - **Don't** ever build the Yuka-style single red/green "health score"

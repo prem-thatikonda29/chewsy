@@ -29,6 +29,12 @@ export interface PredictResponse {
   barcode: string;
   product_name: string;
   image_url: string | null;
+  /**
+   * True when the OFF record is a stub (no ingredient list/tags/counts):
+   * the verdict is still model-computed, but the input is thin — the UI
+   * must present it as low-information, never as a confident reading.
+   */
+  data_sparse: boolean;
   /** MODEL-COMPUTED NOVA class (1-4). Never fetched from OFF. */
   predicted_nova: NovaClass;
   nova_label: string;

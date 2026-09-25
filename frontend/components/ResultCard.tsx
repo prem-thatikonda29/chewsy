@@ -91,7 +91,13 @@ function NutrientChip({ band }: { band: string | null }) {
 }
 
 export default function ResultCard({ data, onScanAnother }: ResultCardProps) {
-  const tier = confidenceTier(data.confidence, data.class_probabilities);
+  // data_sparse (thin OFF record): force the LOW INFORMATION tier regardless
+  // of the raw probability — a muted note beside "99.9% confident" reads as
+  // broken, so the chip never shouts a number the input can't support.
+  // The real probability stays visible in the API + distribution below.
+  const tier = data.data_sparse
+    ? { word: "Low information", variant: "dashed" as const }
+    : confidenceTier(data.confidence, data.class_probabilities);
   const nova = data.predicted_nova as NovaClass;
   const novaStyle = NOVA_STYLE[nova] ?? NOVA_STYLE[4];
 
@@ -132,12 +138,20 @@ export default function ResultCard({ data, onScanAnother }: ResultCardProps) {
                   "inline-flex w-fit items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-semibold " +
                   (tier.variant === "solid"
                     ? "bg-foreground text-background"
-                    : "border border-foreground/40 text-foreground")
+                    : tier.variant === "dashed"
+                      ? "border border-dashed border-foreground/50 text-foreground"
+                      : "border border-foreground/40 text-foreground")
                 }
-                title={`Model confidence ${(data.confidence * 100).toFixed(1)}%`}
+                title={
+                  data.data_sparse
+                    ? "This record has no ingredient list — too thin for a confident reading"
+                    : `Model confidence ${(data.confidence * 100).toFixed(1)}%`
+                }
               >
                 <HelpCircle className="size-3.5" aria-hidden="true" />
-                {tier.word} · {(data.confidence * 100).toFixed(0)}%
+                {data.data_sparse
+                  ? tier.word
+                  : `${tier.word} · ${(data.confidence * 100).toFixed(0)}%`}
               </span>
             </div>
           </div>
@@ -155,14 +169,30 @@ export default function ResultCard({ data, onScanAnother }: ResultCardProps) {
             <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
               How it&rsquo;s made
             </p>
-            <span
-              className="inline-flex w-fit items-center gap-2 rounded-full px-3 py-1.5 text-sm font-semibold"
-              style={{ backgroundColor: novaStyle.bg, color: novaStyle.fg }}
-            >
-              NOVA {nova}
-              <span className="font-normal opacity-80">·</span>
-              <span className="font-medium">{NOVA_LABELS[nova]}</span>
-            </span>
+            {data.data_sparse ? (
+              /* thin input: refuse to assert a processing level — the
+                 model's answer stays visible in the distribution + SHAP
+                 below, framed honestly */
+              <>
+                <span className="inline-flex w-fit items-center gap-2 rounded-full border border-dashed border-foreground/50 px-3 py-1.5 text-sm font-semibold text-muted-foreground">
+                  <HelpCircle className="size-4" aria-hidden="true" />
+                  Not enough information to classify
+                </span>
+                <p className="text-xs text-muted-foreground">
+                  No ingredient list, tags or counts on this record. The
+                  model&rsquo;s reading below comes from nutrients alone.
+                </p>
+              </>
+            ) : (
+              <span
+                className="inline-flex w-fit items-center gap-2 rounded-full px-3 py-1.5 text-sm font-semibold"
+                style={{ backgroundColor: novaStyle.bg, color: novaStyle.fg }}
+              >
+                NOVA {nova}
+                <span className="font-normal opacity-80">·</span>
+                <span className="font-medium">{NOVA_LABELS[nova]}</span>
+              </span>
+            )}
           </Well>
           <Well className="flex flex-col gap-2">
             <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
@@ -183,7 +213,14 @@ export default function ResultCard({ data, onScanAnother }: ResultCardProps) {
 
         {/* 3 — Probability distribution: ambiguity made visible. */}
         <Well as="section" className="flex flex-col gap-3" aria-label="Class probabilities">
-          <SectionHead title="How sure is the model?" caption="4-class distribution" />
+          <SectionHead
+            title="How sure is the model?"
+            caption={
+              data.data_sparse
+                ? "4-class distribution · thin input"
+                : "4-class distribution"
+            }
+          />
           <ProbabilityBars
             probabilities={data.class_probabilities}
             predicted={nova}

@@ -130,16 +130,42 @@ def shap_top_features(pipeline, df: pd.DataFrame, pred: int, k: int = 5) -> list
     ]
 
 
-def build_feature_frame(barcode: str, product: dict) -> pd.DataFrame:
-    """OFF product -> normalized one-row feature frame (no ``code`` col).
+def is_sparse_input(raw: dict) -> bool:
+    """Is this extracted row a stub? (data-sparse honesty flag, PRD 6.6)
 
-    Raises nothing itself; exceptions from the client propagate to the route
-    which maps them to 404/503.
+    Stub = no ingredient text AND no category tags AND at least one count
+    unpublished -- the shape of a thin crowdsourced OFF record (measured:
+    the sparse Diet Coke 5000112644906 matches all three). Computed on the
+    RAW extracted row, BEFORE Stage 2 cleaning. Response metadata ONLY:
+    ``build_feature_frame`` asserts it never reaches the feature frame, so
+    the verdict stays 100% model-computed (Hard rule 11's spirit: this
+    flag reports input quality, it never conditions scoring).
+    """
+    text = str(raw.get("ingredients_pseudo_text") or "").strip()
+    tags = str(raw.get("categories_tags") or "").strip()
+    return (
+        not text
+        and not tags
+        and (raw.get("additives_n") is None or raw.get("ingredients_n") is None)
+    )
+
+
+def build_feature_frame(barcode: str, product: dict) -> tuple[pd.DataFrame, bool]:
+    """OFF product -> (normalized one-row feature frame, data_sparse flag).
+
+    The flag comes from the RAW row pre-clean; the frame is the scoring
+    input only. Raises nothing itself; exceptions from the client
+    propagate to the route which maps them to 404/503.
     """
     raw = off_client.extract_feature_input(barcode, product)
+    data_sparse = is_sparse_input(raw)
     row = normalize_live_row(raw)  # asserts nova_group / Nutri-Score absent
     assert "nova_group" not in row, "Hard rule 11: nova_group reached the feature row"
-    return pd.DataFrame([row]).drop(columns=["code"], errors="ignore")
+    assert "data_sparse" not in row, (
+        "data_sparse is response metadata (input quality), never a feature"
+    )
+    df = pd.DataFrame([row]).drop(columns=["code"], errors="ignore")
+    return df, data_sparse
 
 
 @asynccontextmanager
@@ -216,7 +242,7 @@ def predict(req: PredictRequest) -> PredictResponse:
         except off_client.OffAPIUnavailable as exc:
             raise HTTPException(status_code=503, detail=str(exc)) from exc
 
-        df = build_feature_frame(req.barcode, product)
+        df, data_sparse = build_feature_frame(req.barcode, product)
         pred, proba = score_row(STATE["pipeline"], df)
         top = shap_top_features(STATE["pipeline"], df, pred)
         confidence = float(proba[pred - 1])
@@ -226,9 +252,10 @@ def predict(req: PredictRequest) -> PredictResponse:
         # threshold lookups, never OFF-derived grades). The facts panel's
         # ingredient list is the RAW package text (not the lowercased
         # pseudo-text the model sees) -- unescaped so the UI renders it as
-        # printed.
+        # printed. data_sparse only swaps the headline's processing clause
+        # for the honest fallback.
         row = df.iloc[0].to_dict()
-        facts = build_scan_facts(row, pred)
+        facts = build_scan_facts(row, pred, data_sparse=data_sparse)
         ingredients_text = html.unescape(
             str(product.get("ingredients_text") or "")
         ).strip()
@@ -239,6 +266,7 @@ def predict(req: PredictRequest) -> PredictResponse:
             # renders this directly, so echo the cleaned form, not raw OFF
             product_name=str(df["product_name"].iloc[0]),
             image_url=product.get("image_front_url") or product.get("image_url"),
+            data_sparse=data_sparse,
             predicted_nova=pred,
             nova_label=NOVA_LABELS[pred],
             confidence=round(confidence, 4),

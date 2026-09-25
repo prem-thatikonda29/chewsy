@@ -101,6 +101,11 @@ BEVERAGE_TAG = "en:beverages"
 # unavailable, never one that implies the product is fine.
 NUTRITION_UNKNOWN = "nutrition data unavailable"
 
+# Thin-input processing clause (data_sparse honesty flag): a stub OFF record
+# (no ingredient list/tags/counts) gives the model nothing to classify
+# processing from -- state that instead of asserting the model's answer.
+PROCESSING_UNKNOWN = "Not enough information to classify processing"
+
 
 def _num(value) -> float | None:
     """Coerce a row value to a finite float; missing/NaN/inf -> None.
@@ -193,13 +198,28 @@ def _join_nouns(nouns: list[str]) -> str:
     return ", ".join(nouns[:-1]) + f" and {nouns[-1]}"
 
 
-def headline(nova: int, lights: dict[str, TrafficBand | None]) -> str:
+def headline(
+    nova: int, lights: dict[str, TrafficBand | None], data_sparse: bool = False
+) -> str:
     """Combined two-axis one-liner (PRD 6.7 quadrant rule).
 
     Quadrants: processing (NOVA <= 2 vs >= 3) x nutrients (any red vs none).
     Red = band == 'high'; null bands are NEVER counted as reds (we don't
     guess -- see the all-null fallback below).
+
+    ``data_sparse`` (thin OFF record: no ingredient list/tags/counts) skips
+    the processing clause entirely -- asserting "Ultra-processed" from an
+    input that carries no ingredient signal is exactly the dishonesty this
+    tool fixes. The nutrient axis still reports (two-axis reframe).
     """
+    if data_sparse:
+        if all(lights.get(n) is None for n in TRAFFIC_NUTRIENTS):
+            return f"{PROCESSING_UNKNOWN} \u2014 {NUTRITION_UNKNOWN}"
+        reds = [RED_NOUNS[n] for n in TRAFFIC_NUTRIENTS if lights.get(n) == "high"]
+        if reds:
+            return f"{PROCESSING_UNKNOWN} \u2014 high in {_join_nouns(reds)}"
+        return f"{PROCESSING_UNKNOWN} \u2014 nutritionally decent"
+
     if all(lights.get(n) is None for n in TRAFFIC_NUTRIENTS):
         # edge case: no nutrient report at all -- processing-only headline
         # that states nutrition data is unavailable (never implies fine)
@@ -218,16 +238,18 @@ def headline(nova: int, lights: dict[str, TrafficBand | None]) -> str:
     return f"{_processing_phrase(nova)} and high in {noun}"
 
 
-def build_scan_facts(row: dict, predicted_nova: int) -> dict:
+def build_scan_facts(row: dict, predicted_nova: int, data_sparse: bool = False) -> dict:
     """The four Stage 6.7 computed fields for PredictResponse.
 
     All from the normalized scoring row already in hand during /predict --
     zero extra Open Food Facts calls, zero OFF-derived grades (Hard rule 12).
+    ``data_sparse`` (thin OFF record) only swaps the headline's processing
+    clause for the honest fallback -- the verdict itself is unaffected.
     """
     lights = traffic_lights(row)
     return {
         "nutrition_100g": nutrition_100g(row),
         "traffic_lights": lights,
         "positives": positives(row),
-        "headline": headline(predicted_nova, lights),
+        "headline": headline(predicted_nova, lights, data_sparse=data_sparse),
     }

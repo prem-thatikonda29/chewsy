@@ -16,7 +16,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from app import off_client
-from app.main import STATE, app, build_feature_frame, score_row
+from app.main import STATE, app, build_feature_frame, is_sparse_input, score_row
 from src.batch_predict import run as batch_run
 from src.clean import FORBIDDEN_LEAKAGE_FIELDS, normalize_live_row
 
@@ -62,6 +62,38 @@ def _response_for(client) -> dict:
     resp = client.post("/predict", json={"barcode": KNOWN_BARCODE})
     assert resp.status_code == 200, resp.text
     return resp.json()
+
+
+# A stub OFF record, exactly as measured for the live Diet Coke
+# 5000112644906: real barcode, but no ingredient list, no tags, counts
+# unpublished -- while nutriments/brand/image still exist.
+STUB_BARCODE = "5000112644906"
+
+
+def stub_product(**overrides) -> dict:
+    stub = {
+        "code": STUB_BARCODE,
+        "product_name": "Diet Coke",
+        "brands": "Coca-Cola",
+        "categories_tags": [],
+        "ingredients_tags": [],
+        "ingredients_text": "",
+        "additives_n": None,
+        "ingredients_n": None,
+        "unknown_ingredients_n": None,
+        "image_front_url": "https://images.openfoodfacts.org/images/products/500/011/264/4906/front_en.4.400.jpg",
+        "nutriments": {
+            "energy-kcal_100g": 0,
+            "fat_100g": 0,
+            "saturated-fat_100g": 0,
+            "carbohydrates_100g": 0,
+            "sugars_100g": 0,
+            "proteins_100g": 0,
+            "salt_100g": 0,
+        },
+    }
+    stub.update(overrides)
+    return stub
 
 
 class TestLeakageGuards:
@@ -242,6 +274,7 @@ class TestPredict:
         assert body["barcode"] == KNOWN_BARCODE
         assert body["product_name"] == "Nutella"
         assert body["image_url"].startswith("http")
+        assert body["data_sparse"] is False  # full record, not a stub
         assert body["predicted_nova"] in (1, 2, 3, 4)
         assert body["nova_label"]
         assert 0 < body["confidence"] <= 1
@@ -256,7 +289,7 @@ class TestPredict:
         """The route must be a thin wrapper over the model — no passthrough,
         no OFF conditioning (the fixture's nova_group was stripped)."""
         body = _response_for(client)
-        df = build_feature_frame(KNOWN_BARCODE, clean_product)
+        df, _ = build_feature_frame(KNOWN_BARCODE, clean_product)
         pred, proba = score_row(STATE["pipeline"], df)
         assert body["predicted_nova"] == pred
         assert body["confidence"] == pytest.approx(float(proba[pred - 1]), abs=1e-4)
@@ -270,7 +303,7 @@ class TestPredict:
 
         body = _response_for(client)
         pred = body["predicted_nova"]
-        df = build_feature_frame(KNOWN_BARCODE, clean_product)
+        df, _ = build_feature_frame(KNOWN_BARCODE, clean_product)
         transformed = STATE["pipeline"].named_steps["feature_pipeline"].transform(df)
         values = STATE["explainer"](transformed).values
         if isinstance(values, list):
@@ -301,6 +334,51 @@ class TestPredict:
     def test_invalid_barcode_422(self, client):
         resp = client.post("/predict", json={"barcode": "abc"})
         assert resp.status_code == 422
+
+
+class TestDataSparse:
+    """data-sparse honesty flag (PRD 6.6) — stub records are flagged,
+    never special-cased: the model still computes the verdict, the flag
+    only tells the UI how thin the input was."""
+
+    def test_is_sparse_input_stub_vs_documented(self, clean_product):
+        # stub (measured live Diet Coke shape): no text, no tags, counts null
+        assert is_sparse_input(off_client.extract_feature_input(STUB_BARCODE, stub_product())) is True
+        # documented record: ingredient text present
+        assert is_sparse_input(off_client.extract_feature_input(KNOWN_BARCODE, clean_product)) is False
+        # single-ingredient shape (no text, but tags) — NOT sparse
+        tagged = stub_product(categories_tags=["en:olive-oils"])
+        assert is_sparse_input(off_client.extract_feature_input(STUB_BARCODE, tagged)) is False
+        # text present is enough, whatever the counts do
+        texted = stub_product(ingredients_text="water, sugar")
+        assert is_sparse_input(off_client.extract_feature_input(STUB_BARCODE, texted)) is False
+        # both counts published is enough (flag is deliberately OR on counts)
+        counted = stub_product(additives_n=0, ingredients_n=3)
+        assert is_sparse_input(off_client.extract_feature_input(STUB_BARCODE, counted)) is False
+
+    def test_stub_scan_flags_sparse_but_model_still_decides(
+        self, client, monkeypatch
+    ):
+        product = stub_product()
+        monkeypatch.setattr(off_client, "fetch_product", lambda barcode: dict(product))
+        resp = client.post("/predict", json={"barcode": STUB_BARCODE})
+        assert resp.status_code == 200, resp.text
+        body = resp.json()
+        assert body["data_sparse"] is True
+        # Hard rule 11 intact: verdict is the model's, not OFF's
+        assert body["predicted_nova"] in (1, 2, 3, 4)
+        assert body["nova_label"]
+        assert 0 < body["confidence"] <= 1
+        assert "nova_group" not in resp.text
+        # the headline refuses to assert a processing level on thin input
+        assert body["headline"].startswith("Not enough information to classify")
+        # the nutrient axis still reports (two-axis reframe)
+        assert body["traffic_lights"]["sugars"] == "low"
+
+    def test_data_sparse_never_reaches_the_feature_frame(self):
+        df, sparse = build_feature_frame(STUB_BARCODE, stub_product())
+        assert sparse is True
+        assert "data_sparse" not in df.columns
 
 
 class TestStage67TwoAxisResponse:
@@ -429,6 +507,7 @@ class TestBatchPredict:
         junk = result[result["barcode"] == "not-a-barcode"].iloc[0]
         assert int(good["predicted_nova"]) in (1, 2, 3, 4)
         assert 0 < float(good["confidence"]) <= 1
+        assert bool(good["data_sparse"]) is False  # documented fixture row
         assert "not found" in bad["error"]
         assert pd.isna(bad["predicted_nova"])
         assert "invalid barcode" in junk["error"]  # validated, not sent to OFF
