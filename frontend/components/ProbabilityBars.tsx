@@ -53,7 +53,7 @@ export default function ProbabilityBars({
               {pct.toFixed(1)}%
             </span>
             <div
-              className="col-span-2 h-2.5 overflow-hidden rounded-full bg-muted"
+              className="col-span-2 h-2.5 overflow-hidden rounded-full bg-background"
               role="presentation"
             >
               <div

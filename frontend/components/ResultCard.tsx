@@ -21,9 +21,9 @@ import {
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
-import { Separator } from "@/components/ui/separator";
 import ProbabilityBars from "@/components/ProbabilityBars";
 import ShapChart from "@/components/ShapChart";
+import { SectionHead, Well } from "@/components/Well";
 import {
   NUTRITION_ROWS,
   NOVA_LABELS,
@@ -97,7 +97,7 @@ export default function ResultCard({ data, onScanAnother }: ResultCardProps) {
 
   return (
     <Card className="gap-0">
-      <CardContent className="flex flex-col gap-6 px-5 py-5 sm:px-6">
+      <CardContent className="flex flex-col gap-5 px-4 py-5 sm:px-6">
         {/* 1 — Hero: headline is the LARGEST text (combined two-axis
             sentence leads, not the badge). */}
         <section className="flex flex-col gap-3" aria-label="Verdict">
@@ -146,14 +146,12 @@ export default function ResultCard({ data, onScanAnother }: ResultCardProps) {
           </p>
         </section>
 
-        <Separator />
-
         {/* 2 — Two-axis row: what's made vs what's in it, side by side. */}
         <section
           className="grid gap-4 sm:grid-cols-2"
           aria-label="Two-axis summary"
         >
-          <div className="flex flex-col gap-2 rounded-lg border border-border p-3">
+          <Well className="flex flex-col gap-2">
             <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
               How it&rsquo;s made
             </p>
@@ -165,8 +163,8 @@ export default function ResultCard({ data, onScanAnother }: ResultCardProps) {
               <span className="font-normal opacity-80">·</span>
               <span className="font-medium">{NOVA_LABELS[nova]}</span>
             </span>
-          </div>
-          <div className="flex flex-col gap-2 rounded-lg border border-border p-3">
+          </Well>
+          <Well className="flex flex-col gap-2">
             <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
               What&rsquo;s in it
             </p>
@@ -180,43 +178,33 @@ export default function ResultCard({ data, onScanAnother }: ResultCardProps) {
                 </span>
               ))}
             </div>
-          </div>
+          </Well>
         </section>
 
         {/* 3 — Probability distribution: ambiguity made visible. */}
-        <section className="flex flex-col gap-3" aria-label="Class probabilities">
-          <h2 className="text-sm font-semibold">How sure is the model?</h2>
+        <Well as="section" className="flex flex-col gap-3" aria-label="Class probabilities">
+          <SectionHead title="How sure is the model?" caption="4-class distribution" />
           <ProbabilityBars
             probabilities={data.class_probabilities}
             predicted={nova}
           />
-        </section>
-
-        <Separator />
+        </Well>
 
         {/* 4 — Why: SHAP top features. */}
-        <section className="flex flex-col gap-3" aria-label="Why this prediction">
-          <div>
-            <h2 className="text-sm font-semibold">Why — what the model read</h2>
-            <p className="text-xs text-muted-foreground">
-              Top signals for NOVA {nova}, from this product&rsquo;s
-              ingredients and nutrients.
-            </p>
-          </div>
+        <Well as="section" className="flex flex-col gap-3" aria-label="Why this prediction">
+          <SectionHead
+            title="Why — what the model read"
+            caption={`top 5 signals for NOVA ${nova}`}
+          />
           <ShapChart features={data.shap_top_features} />
-        </section>
-
-        <Separator />
+        </Well>
 
         {/* 5 — Facts panel: per-100g grid (null → "—"), counts, ingredients. */}
-        <section className="flex flex-col gap-3" aria-label="Nutrition facts">
-          <div className="flex items-baseline justify-between gap-3">
-            <h2 className="text-sm font-semibold">Facts per 100g</h2>
-            <p className="text-xs text-muted-foreground">
-              {data.additives_n} additive{data.additives_n === 1 ? "" : "s"} ·{" "}
-              {data.ingredients_n} ingredient{data.ingredients_n === 1 ? "" : "s"}
-            </p>
-          </div>
+        <Well as="section" className="flex flex-col gap-3" aria-label="Nutrition facts">
+          <SectionHead
+            title="Facts per 100g"
+            caption={`${data.additives_n} additive${data.additives_n === 1 ? "" : "s"} · ${data.ingredients_n} ingredient${data.ingredients_n === 1 ? "" : "s"}`}
+          />
           <dl className="grid grid-cols-1 gap-x-6 gap-y-1 sm:grid-cols-2">
             {NUTRITION_ROWS.map(({ key, label, unit }) => {
               const value = data.nutrition_100g[key];
@@ -260,7 +248,7 @@ export default function ResultCard({ data, onScanAnother }: ResultCardProps) {
               official traffic lights.
             </p>
           )}
-          <div className="rounded-lg bg-muted/70 p-3">
+          <div className="rounded-lg bg-background/80 p-3">
             <p className="mb-1 text-xs font-medium uppercase tracking-wide text-muted-foreground">
               Ingredients
             </p>
@@ -270,20 +258,18 @@ export default function ResultCard({ data, onScanAnother }: ResultCardProps) {
               )}
             </p>
           </div>
-        </section>
-
-        <Separator />
+        </Well>
 
         {/* 6 — NOVA explainer: always visible, descriptor-not-verdict. */}
-        <section className="flex flex-col gap-1.5" aria-label="About NOVA">
-          <h2 className="text-sm font-semibold">What NOVA means</h2>
-          <p className="text-sm text-muted-foreground">
+        <Well as="section" className="flex flex-col gap-2" aria-label="About NOVA">
+          <SectionHead title="What NOVA means" caption="descriptor, not verdict" />
+          <p className="text-sm leading-relaxed text-muted-foreground">
             NOVA describes how a food is made, not how nutritious it is. NOVA 1
             is unprocessed or minimally processed; NOVA 4 is ultra-processed —
             a processing level, not a health score. Read the nutrient chips
             above for that.
           </p>
-        </section>
+        </Well>
 
         {/* 7 — Footer microcopy (pitch credibility) + reset. */}
         <footer className="flex flex-col items-start gap-3">

@@ -20,9 +20,12 @@ export const metadata: Metadata = {
 
 // Required over plain HTTP away from localhost: getUserMedia (the camera)
 // only works in a secure context — Stage 11's known limitation, PRD 11.3.
+// viewport-fit=cover lets the safe-area insets in globals.css keep
+// content clear of notches / the home indicator.
 export const viewport: Viewport = {
   width: "device-width",
   initialScale: 1,
+  viewportFit: "cover",
 };
 
 export default function RootLayout({ children }: LayoutProps<"/">) {

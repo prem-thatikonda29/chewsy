@@ -206,7 +206,7 @@ export default function BarcodeScanner({ onDecode, busy }: BarcodeScannerProps) 
             {error.kind !== "insecure" && (
               <button
                 type="button"
-                className="underline underline-offset-2 text-foreground"
+                className="inline-flex min-h-11 items-center underline underline-offset-2 text-foreground"
                 onClick={startScanner}
               >
                 Try camera again

@@ -6,6 +6,7 @@
 // "Ingredient-text signal #9"). Real nutrients/frequencies/SVD — never
 // PCA, per Hard rule (SHAP must explain real features).
 
+import { useEffect, useState } from "react";
 import {
   Bar,
   BarChart,
@@ -32,7 +33,22 @@ interface Row {
 const fmt = (v: number) =>
   `${v >= 0 ? "+" : ""}${v >= 0.005 || v <= -0.005 ? v.toFixed(3) : v.toFixed(4)}`;
 
+/** Narrow screens get a slimmer label gutter so the bars keep width. */
+function useNarrowViewport(): boolean {
+  const [narrow, setNarrow] = useState(false);
+  useEffect(() => {
+    const mq = window.matchMedia("(max-width: 640px)");
+    const update = () => setNarrow(mq.matches);
+    update();
+    mq.addEventListener("change", update);
+    return () => mq.removeEventListener("change", update);
+  }, []);
+  return narrow;
+}
+
 export default function ShapChart({ features }: ShapChartProps) {
+  const narrow = useNarrowViewport();
+
   if (!features.length) {
     return (
       <p className="text-sm text-muted-foreground">
@@ -49,7 +65,11 @@ export default function ShapChart({ features }: ShapChartProps) {
 
   return (
     <figure className="flex flex-col gap-2">
-      <div className="h-[220px] w-full" role="img" aria-label="SHAP feature contributions chart">
+      <div
+        className="h-[200px] w-full sm:h-[220px]"
+        role="img"
+        aria-label="SHAP feature contributions chart"
+      >
         <ResponsiveContainer width="100%" height="100%">
           <BarChart
             data={data}
@@ -60,14 +80,14 @@ export default function ShapChart({ features }: ShapChartProps) {
             <CartesianGrid horizontal={false} stroke="var(--border)" />
             <XAxis
               type="number"
-              tick={{ fontSize: 11, fill: "var(--muted-foreground)" }}
+              tick={{ fontSize: narrow ? 10 : 11, fill: "var(--muted-foreground)" }}
               tickFormatter={fmt}
             />
             <YAxis
               type="category"
               dataKey="label"
-              width={150}
-              tick={{ fontSize: 11, fill: "var(--foreground)" }}
+              width={narrow ? 104 : 150}
+              tick={{ fontSize: narrow ? 10 : 11, fill: "var(--foreground)" }}
             />
             <ReferenceLine x={0} stroke="var(--foreground)" strokeOpacity={0.4} />
             <Tooltip

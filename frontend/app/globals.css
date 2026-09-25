@@ -50,8 +50,10 @@
 
 /* Design tokens — composed per PRODUCT.md (register: product;
    personality: Honest · Calm · Credible). Strategy: restrained —
-   pure-white surface, warm near-black ink, one saturated brand honey
-   (palette seed, hue 74.6) for actions, deep ink-blue for focus.
+   pure-white surface, warm near-black ink, one brand honey (palette
+   seed, hue ~75) for actions, muted ink-blue for focus. Chroma held
+   ~20-30% below full saturation (quieter pass, 25 Sep 2026): accents
+   and indicators read soft, all pairs still clear AA.
    GREEN/AMBER/RED IS RESERVED for nutrient chips (--fsa-*): it carries
    the published FSA meaning and must never describe the NOVA axis.
    Processing level gets the neutral cool-grey ramp (--nova-*), light→dark. */
@@ -62,7 +64,7 @@
   --card-foreground: oklch(0.17 0.012 75);
   --popover: oklch(1 0 0);
   --popover-foreground: oklch(0.17 0.012 75);
-  --primary: oklch(0.47 0.135 74.6);
+  --primary: oklch(0.49 0.105 75);
   --primary-foreground: oklch(0.99 0 0);
   --secondary: oklch(0.968 0.008 75);
   --secondary-foreground: oklch(0.2 0.012 75);
@@ -70,12 +72,12 @@
   --muted-foreground: oklch(0.475 0.012 75);
   --accent: oklch(0.955 0.01 75);
   --accent-foreground: oklch(0.2 0.012 75);
-  --destructive: oklch(0.577 0.245 27.325);
+  --destructive: oklch(0.48 0.17 27);
   --border: oklch(0.922 0.008 75);
   --input: oklch(0.922 0.008 75);
-  --ring: oklch(0.48 0.1 255);
-  --chart-1: oklch(0.47 0.135 74.6);
-  --chart-2: oklch(0.48 0.1 255);
+  --ring: oklch(0.48 0.085 255);
+  --chart-1: oklch(0.49 0.105 75);
+  --chart-2: oklch(0.48 0.085 255);
   --chart-3: oklch(0.7 0.008 75);
   --chart-4: oklch(0.5 0.008 75);
   --chart-5: oklch(0.3 0.008 75);
@@ -93,11 +95,11 @@
      nutrients of concern only). Each carries its *_fg so chips meet
      contrast; band words + icons render alongside the color so the
      meaning survives color blindness (PRODUCT.md accessibility). */
-  --fsa-low: oklch(0.47 0.14 150);
+  --fsa-low: oklch(0.46 0.1 150);
   --fsa-low-fg: oklch(0.99 0 0);
-  --fsa-medium: oklch(0.78 0.14 75);
+  --fsa-medium: oklch(0.78 0.11 75);
   --fsa-medium-fg: oklch(0.22 0.04 75);
-  --fsa-high: oklch(0.46 0.18 27);
+  --fsa-high: oklch(0.455 0.13 27);
   --fsa-high-fg: oklch(0.99 0 0);
   --fsa-none: oklch(0.968 0.008 75);
   --fsa-none-fg: oklch(0.475 0.012 75);
@@ -169,5 +171,36 @@
     animation-iteration-count: 1 !important;
     transition-duration: 0.01ms !important;
     scroll-behavior: auto !important;
+  }
+}
+
+/* ---- Mobile accessibility (adapt pass, 25 Sep 2026) ---- */
+
+/* Touch: coarse pointers get 44x44 minimum targets (WCAG 2.5.5 /
+   adapt reference) while fine-pointer desktop keeps compact 32px. */
+@media (pointer: coarse) {
+  [data-slot="button"],
+  [data-slot="input"],
+  button.rounded-full {
+    min-height: 44px;
+  }
+}
+
+/* Mobile type floor: rem scale nudged up on small screens so 14px
+   prose lands ~15px and inputs stay >=16px (iOS focus-zoom guard). */
+@media (max-width: 640px) {
+  html {
+    font-size: 17px;
+  }
+}
+
+/* Notches / home indicator (needs viewport-fit=cover in the viewport
+   export): content never sits under system chrome. */
+@supports (padding: env(safe-area-inset-bottom)) {
+  body {
+    padding-left: env(safe-area-inset-left);
+    padding-right: env(safe-area-inset-right);
+    padding-top: env(safe-area-inset-top);
+    padding-bottom: env(safe-area-inset-bottom);
   }
 }

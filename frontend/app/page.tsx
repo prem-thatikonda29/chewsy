@@ -13,6 +13,7 @@ import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
 import BarcodeScanner from "@/components/BarcodeScanner";
 import ResultCard from "@/components/ResultCard";
+import { SectionHead, Well } from "@/components/Well";
 import { BARCODE_PATTERN, ScanError, predict, type ScanErrorKind } from "@/lib/api";
 import type { PredictResponse } from "@/types/predict";
 
@@ -107,9 +108,14 @@ export default function Home() {
 
   if (screen.s === "loading") {
     return (
-      <div className="mx-auto w-full max-w-3xl px-4 py-6" aria-busy="true">
+      <div
+        className="mx-auto w-full max-w-3xl px-4 py-6"
+        aria-busy="true"
+        role="status"
+        aria-live="polite"
+      >
         <Card className="gap-0">
-          <CardContent className="flex flex-col gap-4 px-5 py-5">
+          <CardContent className="flex flex-col gap-5 px-4 py-5 sm:px-6">
             <div className="flex items-center gap-2 text-sm text-muted-foreground">
               <Loader2 className="size-4 animate-spin text-primary" aria-hidden="true" />
               Looking up <span className="font-mono">{screen.barcode}</span> —
@@ -136,7 +142,7 @@ export default function Home() {
     return (
       <div className="mx-auto w-full max-w-3xl px-4 py-6">
         <Card className="gap-0">
-          <CardContent className="flex flex-col gap-4 px-5 py-5">
+          <CardContent className="flex flex-col gap-5 px-4 py-5 sm:px-6">
             <Alert>
               <TriangleAlert />
               <AlertTitle>{copy.title}</AlertTitle>
@@ -179,16 +185,17 @@ export default function Home() {
       </div>
 
       <Card className="gap-0">
-        <CardContent className="flex flex-col gap-4 px-5 py-5">
+        <CardContent className="flex flex-col gap-5 px-4 py-5 sm:px-6">
           <BarcodeScanner onDecode={(code) => void runScan(code)} busy={false} />
 
           {/* 7.3 — manual entry sits alongside the camera view: every real
-              scanner app has one, for lighting/focus failures mid-demo. */}
+              scanner app has one, for lighting/focus failures mid-demo.
+              Stacks full-width on phones so both targets stay >=44px. */}
           <form onSubmit={submitManual} className="flex flex-col gap-2">
             <label htmlFor="manual-barcode" className="text-sm font-medium">
               Enter barcode manually
             </label>
-            <div className="flex gap-2">
+            <div className="flex flex-col gap-2 sm:flex-row">
               <Input
                 id="manual-barcode"
                 inputMode="numeric"
@@ -202,7 +209,7 @@ export default function Home() {
                 aria-invalid={manualError ? true : undefined}
                 className="font-mono"
               />
-              <Button type="submit" disabled={!manualValue}>
+              <Button type="submit" disabled={!manualValue} className="sm:w-auto">
                 <Search className="size-4" /> Look up
               </Button>
             </div>
@@ -215,10 +222,11 @@ export default function Home() {
         </CardContent>
       </Card>
 
-      {/* 7.9 — session scan history, last 10. */}
+      {/* 7.9 — session scan history, last 10 (same well recipe as the
+          result card's sections). */}
       {history.length > 0 && (
-        <section className="flex flex-col gap-2" aria-label="Recent scans">
-          <h2 className="text-sm font-semibold">Recent scans (this session)</h2>
+        <Well as="section" className="flex flex-col gap-3" aria-label="Recent scans">
+          <SectionHead title="Recent scans" caption="this session · tap to re-scan" />
           <div className="flex flex-wrap gap-2">
             {history.map((entry) => (
               <button
@@ -241,7 +249,7 @@ export default function Home() {
               </button>
             ))}
           </div>
-        </section>
+        </Well>
       )}
     </div>
   );
