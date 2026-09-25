@@ -894,9 +894,11 @@ B (frontend-only) + C (6.7 response extension). **Rejected:** tabbed
 layout, showing OFF's `nova_group`/Nutri-Score (Hard rules 11 + 12),
 anything requiring a second backend fetch.
 
-- [ ] 7.1 Scaffold with `create-next-app` (TypeScript, App Router) inside
-  `frontend/`.
-- [ ] 7.2 `components/BarcodeScanner.tsx`: use the browser's camera via a
+- [x] 7.1 Scaffold with `create-next-app` (TypeScript, App Router) inside
+  `frontend/`. (Next 16.3.6 + React 19 + Tailwind 4; `shadcn/ui` init'd
+  on top as the agreed component base — deviation from bare Tailwind,
+  approved 25 Sep 2026.)
+- [x] 7.2 `components/BarcodeScanner.tsx`: use the browser's camera via a
   client-side barcode-decoding library — **`html5-qrcode`** is the easiest
   fit (handles camera permission prompts and supports EAN-13/UPC, the
   formats real grocery barcodes use, not just QR codes). Decoding happens
@@ -912,6 +914,11 @@ anything requiring a second backend fetch.
   **backend needs zero changes.** Comment this in the component (checksum
   validation makes decodes self-validating — no extra client-side barcode
   validation needed).
+  **Built:** `components/BarcodeScanner.tsx` — dynamic-import of
+  `html5-qrcode` (SSR-safe), format whitelist enforced via
+  `formatsToSupport`, `facingMode: environment`, `qrbox 240×160`,
+  `fps 10`, stream stopped before `onDecode` fires; mechanism comment
+  recorded in-file.
 
   **Config specifics:**
   - Restrict formats to `EAN_13`, `UPC_A`, `EAN_8` — scanning all formats
@@ -925,15 +932,18 @@ anything requiring a second backend fetch.
   API:** Safari/iOS has it disabled by default even currently, Firefox
   doesn't support it, and Chrome desktop ships it only on macOS/ChromeOS —
   not Windows or Linux.
-- [ ] 7.3 Keep a manual text-entry fallback input alongside the camera view
+- [x] 7.3 Keep a manual text-entry fallback input alongside the camera view
   (not a compromise — every real scanner app has this, for when lighting
   or focus fails mid-demo).
-- [ ] 7.4 On decode/submit: `fetch(POST, '<API_URL>/predict', { barcode })`.
+- [x] 7.4 On decode/submit: `fetch(POST, '<API_URL>/predict', { barcode })`.
   **This frontend must call the FastAPI endpoint over HTTP — it must never
   reimplement scoring logic or duplicate the model on the frontend.** Same
   "one source of truth" principle the mindmap describes for Streamlit,
   just carried over to this stack.
-- [ ] 7.5 Result view (single scroll card per the approved design above):
+  (Built: `frontend/lib/api.ts` — the UI's only data path; digits are
+  stripped on input and the client pattern mirrors the API's
+  `^\d{6,14}$`; no scoring/band/headline math anywhere in `frontend/`.)
+- [x] 7.5 Result view (single scroll card per the approved design above):
   product name/image from the API response, **`headline` as the largest
   text**, two-axis row ("How it's made" NOVA badge on a **neutral
   light→dark ramp — never green→red** · "What's in it" 4 nutrient chips
@@ -941,30 +951,60 @@ anything requiring a second backend fetch.
   chip with tier word (Confident / Fairly sure / Borderline), and the
   SHAP top-features rendered as a simple bar chart (e.g. `recharts`) with
   humanized feature labels.
-- [ ] 7.6 `NEXT_PUBLIC_API_URL` as an env var, not a hardcoded localhost URL
+  (Built: `components/ResultCard.tsx` — headline renders as the largest
+  text (`text-3xl`); NOVA badge uses the neutral `--nova-*` ramp
+  (e2e-computed bg `lab(21.1 …)` = charcoal, never green/red); G/A/R
+  appears only on the four nutrient chips with band words + icons;
+  confidence tiers Confident/Fairly sure/Borderline incl. the top-2-gap
+  <15pts rule; `ShapChart.tsx` (recharts) colors toward=honey/away=blue
+  with humanized labels.)
+- [x] 7.6 `NEXT_PUBLIC_API_URL` as an env var, not a hardcoded localhost URL
   — you'll need this to differ between local dev and the Docker/EC2 build.
-- [ ] 7.7 `components/ProbabilityBars.tsx`: the 4-class distribution —
+  (Committed `.env.local` → gitignored by `frontend/.gitignore`'s `.env*`;
+  value is read at build time — Stage 8 passes it during `next build`.)
+- [x] 7.7 `components/ProbabilityBars.tsx`: the 4-class distribution —
   every bar labeled with NOVA class name + %, predicted class highlighted;
   this is what makes model ambiguity visible (e.g. cheese stick
   0.87 / 0.12 instead of a silent single number).
-- [ ] 7.8 Facts panel: per-100g nutrition grid (`null` → "—"), additive +
+  (Built: `components/ProbabilityBars.tsx` — 4 rows, class name + % label,
+  predicted row highlighted on the same neutral ramp with a `predicted`
+  tag.)
+- [x] 7.8 Facts panel: per-100g nutrition grid (`null` → "—"), additive +
   ingredient counts, full ingredient list — **depends on 6.7** (do 6.7
   first; it is a backend change with its own tests).
-- [ ] 7.9 Scan flow extras: NOVA explainer (per revised design: **always
+  (Built in `ResultCard.tsx`: 2-col dl grid, `null` → `—`, counts line
+  `N additives · N ingredients`, full ingredient text block; 6.7
+  `positives` render as muted OUTLINE chips on the Fibre/Protein rows
+  with the "Chewsy's own bands — not official traffic lights" caption.)
+- [x] 7.9 Scan flow extras: NOVA explainer (per revised design: **always
   visible**, not collapsed — carries the "how it's made ≠ how nutritious
   it is" line), session scan-history chips (last 10: "Nutella → 4"),
   "Scan another" reset.
-- [ ] 7.10 Error/edge states + typing: 404 → "Product not found in OFF",
+  (Built: explainer section always rendered with the exact binding line;
+  `page.tsx` keeps a session `history` state — last 10, re-scan chips
+  `name → NOVA`, `Scan another` returns to the scan screen.)
+- [x] 7.10 Error/edge states + typing: 404 → "Product not found in OFF",
   503/network → "OFF unreachable — retry" with retry button, missing
   image → placeholder; `types/predict.ts` mirrors the Pydantic response
   schema exactly. **Camera errors:** `navigator.mediaDevices` undefined
   (insecure context) → manual entry + explicit "camera requires HTTPS"
   message, not a broken viewfinder; permission denied → manual entry
   emphasized; no camera device found → manual entry.
+  (Built: `ScanError` kinds not_found/unavailable/invalid/unknown with the
+  PRD copy verbatim + Retry button on 503/network; `types/predict.ts`
+  mirrors `app/schemas.py` field-for-field; camera gates by `name` of the
+  DOMException — insecure/permission/nodevice each render an Alert and
+  keep manual entry live; missing image → `ImageOff` placeholder.)
 - [ ] 7.11 Verification: `npm run typecheck` + `npm run build` green, one
   manual camera e2e against the local API, and 6.7's extended pytest
   suite green (no frontend test suite required by the PRD).
-- [ ] 7.12 Commit: `feat: Next.js scanner UI`.
+  **Status 25 Sep 2026:** typecheck ✅ lint ✅ build ✅ (static `/`),
+  pytest ✅ 107 passed + 1 gated skip, plus a 27-check automated
+  headless-Chrome e2e (scan → result card → history → 404 error → reset,
+  zero unexpected console/network errors). **Remaining: the manual
+  camera e2e — needs a physical camera + human at
+  `localhost:3000` with the API on :8000.**
+- [x] 7.12 Commit: `feat: Next.js scanner UI` (this commit).
 
 ### Stage 8 — Containerization
 **Goal:** one image, both a Python and a Node runtime inside it — this is
