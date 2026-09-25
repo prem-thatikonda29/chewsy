@@ -702,11 +702,50 @@ matches what the champion was packaged with.
   killed the run and lost already-scored rows) + barcode-format validation
   before anything is sent to OFF.
 - [x] 6.6 Commit: `feat: FastAPI prediction service + batch scoring script`.
+- [ ] 6.7 **Scope addition (approved 25 Sep 2026 — NOT yet built; planned
+  together with Stage 7):** extend `PredictResponse` with the facts a
+  scan-result screen needs (data is already in hand during scoring — zero
+  extra API calls):
+  - `nutrition_100g`: the 8 per-100g values taken from the **normalized**
+    row (Stage 2 clean values — capped, invalid → `null`; frontend renders
+    `null` as "—", never a raw impossible number),
+  - `additives_n`, `ingredients_n` (ints),
+  - `ingredients_text` (raw OFF text — what's actually on the package).
+  Must NOT add any OFF label field (Hard rule 11 unchanged); extend
+  `tests/test_api.py` to assert the new fields (e.g. Nutella: energy 539,
+  salt 0.107). Feeds Stage 7.8's facts panel.
 
 ### Stage 7 — Next.js Frontend
 **Goal:** a real, camera-driven scanner UI — not a form. This is the layer
 that has to feel like a product, so it gets more care than a typical
 course-project UI.
+
+**Result-screen design (approved 25 Sep 2026 — brainstormed scope change):**
+Structure = **single scrollable result card** (approach chosen over
+tabbed/accordion variants: nothing hidden from judges, least interactive
+state to break in Stage 8's container). Top → bottom:
+1. **Hero** — image, product name, barcode (small mono), color-coded
+   verdict badge (green→red across NOVA 1→4) + plain label, confidence
+   chip with tier word: ≥0.8 "Confident" · 0.6–0.8 "Fairly sure" ·
+   <0.6 **or** top-2 gap <15 pts → "**Borderline**" (honest for
+   cheese-stick-type 0.87/0.12 results).
+2. **Probability distribution** — 4 bars, each labeled with class name +
+   %, predicted class highlighted; makes model ambiguity *visible*.
+3. **Why — SHAP chart** (`recharts`, PRD 7.5 baseline) — top-5, sign =
+   toward/away from verdict; humanized labels (`num__additives_n` →
+   "Number of additives", SVD components → "learned ingredient-text
+   signal").
+4. **Facts panel** — per-100g nutrition grid + additive/ingredient counts
+   + full ingredient list (needs 6.7).
+5. **NOVA explainer** — the only collapsed element (tap "What is NOVA
+   1–4?").
+6. Footer microcopy: *"Chewsy model verdict — computed from ingredients,
+   not copied from OFF"* (pitch credibility).
+Plus: session **scan-history chips** (last 10) on the scanner screen and a
+"Scan another" reset. Scope tiers chosen: A (existing response fields) +
+B (frontend-only) + C (6.7 response extension). **Rejected:** tabbed
+layout, showing OFF's `nova_group`/Nutri-Score (Hard rule 11 + leakage
+optics with judges), anything requiring a second backend fetch.
 
 - [ ] 7.1 Scaffold with `create-next-app` (TypeScript, App Router) inside
   `frontend/`.
@@ -724,12 +763,32 @@ course-project UI.
   reimplement scoring logic or duplicate the model on the frontend.** Same
   "one source of truth" principle the mindmap describes for Streamlit,
   just carried over to this stack.
-- [ ] 7.5 Result view: product name/image from the API response, a
-  color-coded NOVA verdict badge (green→red across 1→4), and the SHAP
-  top-features rendered as a simple bar chart (e.g. `recharts`).
+- [ ] 7.5 Result view (single scroll card per the approved design above):
+  product name/image from the API response, a color-coded NOVA verdict
+  badge (green→red across 1→4) + plain label, confidence chip with tier
+  word (Confident / Fairly sure / Borderline), and the SHAP top-features
+  rendered as a simple bar chart (e.g. `recharts`) with humanized
+  feature labels.
 - [ ] 7.6 `NEXT_PUBLIC_API_URL` as an env var, not a hardcoded localhost URL
   — you'll need this to differ between local dev and the Docker/EC2 build.
-- [ ] 7.7 Commit: `feat: Next.js scanner UI`.
+- [ ] 7.7 `components/ProbabilityBars.tsx`: the 4-class distribution —
+  every bar labeled with NOVA class name + %, predicted class highlighted;
+  this is what makes model ambiguity visible (e.g. cheese stick
+  0.87 / 0.12 instead of a silent single number).
+- [ ] 7.8 Facts panel: per-100g nutrition grid (`null` → "—"), additive +
+  ingredient counts, full ingredient list — **depends on 6.7** (do 6.7
+  first; it is a backend change with its own tests).
+- [ ] 7.9 Scan flow extras: NOVA explainer (the one collapsed element),
+  session scan-history chips (last 10: "Nutella → 4"), "Scan another"
+  reset.
+- [ ] 7.10 Error/edge states + typing: 404 → "Product not found in OFF",
+  503/network → "OFF unreachable — retry" with retry button, camera
+  denied → manual entry emphasized, missing image → placeholder;
+  `types/predict.ts` mirrors the Pydantic response schema exactly.
+- [ ] 7.11 Verification: `npm run typecheck` + `npm run build` green, one
+  manual camera e2e against the local API, and 6.7's extended pytest
+  suite green (no frontend test suite required by the PRD).
+- [ ] 7.12 Commit: `feat: Next.js scanner UI`.
 
 ### Stage 8 — Containerization
 **Goal:** one image, both a Python and a Node runtime inside it — this is
