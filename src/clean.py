@@ -297,18 +297,23 @@ def clean(df: pd.DataFrame, verbose: bool = True) -> pd.DataFrame:
     # purpose -- see module docstring. Group-median imputation was moved to
     # src/features.py::GroupMedianImputer so it is fit on train rows only.
 
-    # Count/int columns: MISSING COUNTS STAY NaN (changed 25 Sep 2026).
-    # They used to be fillna(0), which turned "OFF never reported an
-    # additive count" into "definitely zero additives". Sparse entries are
-    # exactly Chewsy's target population (unlabeled products), so the
-    # coercion erased the model's top NOVA-4 signals on the very rows the
-    # app exists to score -> confident NOVA 1/2 drift on energy drinks.
-    # NaN now flows to the Stage 3 imputer (GroupMedianImputer + the
-    # numeric branch's SimpleImputer both cover COUNT_COLS in
-    # src/features.py), and FeatureCreator derives the count-missingness
-    # indicators from this NaN state at transform time. Row-local: no
-    # statistics are learned from other rows here.
-    # (Counts are left untouched below -- no anomaly decision applies.)
+    # Count/int columns -- TEXT-CONDITIONED FILL (revised 25 Sep 2026,
+    # evidence: docs/data_quality_report.md). Two different kinds of null:
+    # 1. Text present + count null = a TRUE ZERO the Stage 1 search pull
+    #    failed to deliver: the pull never contains a 0 in any count column
+    #    (min non-null = 1.0 across all three), and 18/18 live product-API
+    #    lookups on null-with-text rows returned 0. Fill 0 = repair the
+    #    lossy pull.
+    # 2. No ingredient text = genuinely unknown (nothing to count); the
+    #    live product API returns null there too (the sparse energy-drink
+    #    entry shape). Keep NaN -> Stage 3 imputer + text_was_missing
+    #    carry the signal ("unknown", not "definitely zero").
+    # A blanket fillna(0) lied about (2); a blanket keep-NaN threw away
+    # the verified zeros of (1). Row-local either way -- no statistics
+    # are learned from other rows.
+    has_text = df[TEXT_COL].fillna("").str.strip().ne("")
+    for col in ["additives_n", "ingredients_n", "unknown_ingredients_n"]:
+        df.loc[df[col].isna() & has_text, col] = 0
 
     # --- text normalization (PRD 2.4) ----------------------------------
     # Lowercase, strip punctuation noise, collapse whitespace, unescape any
@@ -366,9 +371,10 @@ def normalize_live_row(raw: dict) -> dict:
     One source of truth: the API row gets the EXACT Stage 2 row-local
     normalizations the training data got (brand list-repr parse + lowercase,
     HTML-unescape, mass cap at 100 g, negatives/impossible energy -> NaN,
-    sat-fat > fat -> NaN, Atwater cross-check, count columns kept NaN when
-    unreported, text normalization) -- applied here as
-    ``clean(df, verbose=False)`` on a
+    sat-fat > fat -> NaN, Atwater cross-check, count columns -> 0 when
+    ingredient text exists (verified true zero) but kept NaN when no
+    ingredient list exists (genuinely unknown), text normalization) --
+    applied here as ``clean(df, verbose=False)`` on a
     one-row frame, never as a duplicated copy of the logic.
 
     What this deliberately does NOT do: impute NaNs -- that stays in the

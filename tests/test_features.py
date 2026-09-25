@@ -35,9 +35,9 @@ def make_sample(n=60, seed=42) -> pd.DataFrame:
         " ".join(rng.choice(words, rng.integers(3, 7))) for _ in range(n)
     ]
     names = rng.choice(["Choco Bar", "Herbal Tea", "Salted Chips", "Plain Milk"], n)
-    # two sparse rows (25 Sep 2026): counts unreported -> NaN, like the
-    # clean.csv rows the fillna(0) fix now preserves. Also keeps the
-    # count indicators from being constant-0 (VarianceThreshold).
+    # two sparse rows (25 Sep 2026): no ingredient list -> counts stay
+    # NaN (clean.py's text-conditioned fill leaves them unknown), so the
+    # pipeline must impute them; also keeps the counts non-degenerate.
     additives = rng.integers(0, 10, n).astype(float)
     ingredients = rng.integers(1, 20, n).astype(float)
     additives[0] = np.nan
@@ -109,23 +109,17 @@ class TestFeatureCreator:
 
     def test_computes_indicator_columns_when_absent(self):
         """Raw API rows have no `*_was_missing` columns: derive them from
-        the current NaN state, before anything fills the nutrients.
-        Count indicators follow the same rule -- clean.csv carries none
-        (25 Sep 2026 sparse-input fix), so NaN counts must yield 1."""
-        df = make_sample(n=4).drop(columns=list(INDICATOR_COLS), errors="ignore")
+        the current NaN state, before anything fills the nutrients."""
+        df = make_sample(n=4).drop(columns=list(INDICATOR_COLS))
         df.loc[0, "fiber_100g"] = np.nan
         df.loc[1, "sodium_100g"] = np.nan
         df.loc[2, "ingredients_pseudo_text"] = "   "
         df.loc[3, list(NUTRIENT_COLS)] = np.nan
-        df.loc[0, "additives_n"] = np.nan
-        df.loc[1, "ingredients_n"] = np.nan
         out = FeatureCreator().fit_transform(df)
         assert out["fiber_100g_was_missing"].tolist() == [1, 0, 0, 1]
         assert out["sodium_100g_was_missing"].tolist() == [0, 1, 0, 1]
         assert out["text_was_missing"].tolist() == [0, 0, 1, 0]
         assert out["nutrients_all_missing"].tolist() == [0, 0, 0, 1]
-        assert out["additives_n_was_missing"].tolist() == [1, 0, 0, 0]
-        assert out["ingredients_n_was_missing"].tolist() == [0, 1, 0, 0]
 
     def test_preserves_indicator_columns_when_present(self):
         """Training rows come from clean.csv with the indicators already
@@ -239,8 +233,7 @@ class TestPipeline:
     def test_full_pipeline_shape(self):
         pipe = small_pipeline()
         Z = pipe.fit_transform(make_sample())
-        # 19 numeric (8 nutrients + 3 counts + 6 indicators + 2 ratios)
-        # + 1 brand + 1 category + 3 SVD components
+        # 17 numeric + 1 brand + 1 category + 3 SVD components
         assert Z.shape == (60, len(NUMERIC_FEATURE_COLS) + 2 + 3)
         assert np.isfinite(Z).all()
 
@@ -262,8 +255,7 @@ class TestPipeline:
         df.loc[3, "ingredients_pseudo_text"] = ""
         df.loc[4, "product_name"] = None
         df.loc[5, "sugars_100g"] = -3.0  # invalid -> skew step -> imputer
-        # sparse entry: OFF reports no additive/ingredient counts (the
-        # Diet Coke / Monster failure mode -- NaN, never fillna(0))
+        # sparse entry: no ingredient list -> counts unknown (NaN, not 0)
         df.loc[6, ["additives_n", "ingredients_n", "unknown_ingredients_n"]] = np.nan
         pipe = small_pipeline()
         Z = pipe.fit_transform(df)

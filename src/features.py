@@ -35,12 +35,12 @@ Evidence-backed decisions (full writeup: docs/data_quality_report.md §6):
   nutrients -> GroupMedianImputer (group median -> global train median)
   then the numeric branch's SimpleImputer, missing text/cats -> filled,
   unseen brand/tag -> mean training frequency, negatives -> NaN -> impute.
-- Sparse-input handling (25 Sep 2026): ``additives_n`` / ``ingredients_n``
-  are no longer fillna(0)'d in clean.py -- unreported counts stay NaN and
-  get imputed here, while ``additives_n_was_missing`` /
-  ``ingredients_n_was_missing`` (computed in FeatureCreator when absent)
-  let the model tell "never reported" from "reported zero". Both are in
-  NUMERIC_FEATURE_COLS, so the imputer/scaler cover them.
+- Sparse-input handling (25 Sep 2026): clean.py fills a missing count
+  with 0 ONLY when ingredient text exists (a verified true zero the
+  lossy Stage 1 search pull dropped) and keeps NaN when no ingredient
+  list exists -- so ``text_was_missing`` + the imputer separate
+  "unknown" from "definitely zero". COUNT_COLS stay in
+  NUMERIC_FEATURE_COLS and tolerate NaN through both imputers.
 """
 
 from __future__ import annotations
@@ -71,11 +71,6 @@ COUNT_COLS = ["additives_n", "ingredients_n", "unknown_ingredients_n"]
 INDICATOR_COLS = [
     "fiber_100g_was_missing", "sodium_100g_was_missing",
     "text_was_missing", "nutrients_all_missing",
-    # Sparse-input indicators (25 Sep 2026): clean() keeps unreported
-    # additive/ingredient counts as NaN instead of 0, so "never reported"
-    # is distinguishable from "reported zero" -- the sparse-entry failure
-    # mode that sent energy drinks to NOVA 1/2.
-    "additives_n_was_missing", "ingredients_n_was_missing",
 ]
 
 RATIO_COLS = ["sugar_fiber_ratio", "sat_fat_fat_ratio"]
@@ -144,13 +139,6 @@ class FeatureCreator(BaseEstimator, TransformerMixin):
             present = [c for c in NUTRIENT_COLS if c in out.columns]
             if present:
                 out["nutrients_all_missing"] = out[present].isna().all(axis=1).astype(int)
-        # count-missingness: clean.csv carries no such columns (they are
-        # derived here from the NaN counts clean() preserves), so they are
-        # computed for both train and inference rows -- unless a caller
-        # pre-computed them, in which case they are kept verbatim.
-        for c in ("additives_n", "ingredients_n"):
-            if f"{c}_was_missing" not in out.columns and c in out.columns:
-                out[f"{c}_was_missing"] = out[c].isna().astype(int)
 
         if BRAND_COL in out.columns:
             out[BRAND_COL] = out[BRAND_COL].fillna("unknown")
@@ -188,11 +176,7 @@ class FeatureCreator(BaseEstimator, TransformerMixin):
 
     def get_feature_names_out(self, input_features=None):
         base = np.asarray(input_features, dtype=object)
-        # indicators derived inside transform() are not in the input list
-        computed = [c for c in INDICATOR_COLS if c not in set(base)]
-        extra = np.asarray(
-            [COMBINED_TEXT_COL] + RATIO_COLS + computed, dtype=object
-        )
+        extra = np.asarray([COMBINED_TEXT_COL] + RATIO_COLS, dtype=object)
         return np.concatenate([base, extra])
 
 

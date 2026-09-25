@@ -66,8 +66,7 @@ def load_pipeline(path: Path = MODEL_PATH):
 
 
 def _feature_names(pipeline) -> list[str]:
-    """Names for the transformed columns (46 with the count-missingness
-    indicators) -- same navigation as
+    """Names for the transformed columns -- same navigation as
     src/train.py::feature_names (SHAP needs them for readable labels)."""
     ct = pipeline.named_steps["feature_pipeline"].named_steps["features"]
     return [str(n) for n in ct.get_feature_names_out()]
