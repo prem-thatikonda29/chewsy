@@ -1,10 +1,15 @@
 #!/usr/bin/env bash
-# PRD 8.2: start uvicorn on :8000, poll /health until it responds, then start
-# `next start` on :3000. Both stop together on SIGTERM (Docker stops the
-# container with SIGTERM → this script is PID 1 and the trap tears both down).
+# PRD 8.2 + adapted 11: serve API + frontend by default (local demo image);
+# APP_MODE=api serves ONLY uvicorn on ${PORT:-8000} — Render free exposes a
+# single HTTP port per web service (https://render.com/docs), and the UI
+# lives on Vercel there. Both modes tear down together on SIGTERM (this
+# script is PID 1; the trap stops the children).
 set -euo pipefail
 
-uvicorn app.main:app --host 0.0.0.0 --port 8000 &
+MODE="${APP_MODE:-both}"
+API_PORT="${PORT:-8000}"
+
+uvicorn app.main:app --host 0.0.0.0 --port "$API_PORT" &
 API_PID=$!
 FE_PID=""
 
@@ -18,10 +23,10 @@ shutdown() {
 }
 trap shutdown TERM INT
 
-echo "[entrypoint] waiting for API /health ..."
+echo "[entrypoint] mode=$MODE — waiting for API /health on :$API_PORT ..."
 healthy=0
 for _ in $(seq 1 60); do
-  if curl -fsS http://localhost:8000/health >/dev/null 2>&1; then
+  if curl -fsS "http://localhost:$API_PORT/health" >/dev/null 2>&1; then
     healthy=1
     break
   fi
@@ -31,8 +36,17 @@ if [ "$healthy" -ne 1 ]; then
   echo "[entrypoint] API failed to become healthy within 60s" >&2
   exit 1
 fi
-echo "[entrypoint] API healthy — starting frontend on :3000"
+echo "[entrypoint] API healthy"
 
+if [ "$MODE" = "api" ]; then
+  # Render: single-port API-only; frontend is on Vercel.
+  echo "[entrypoint] APP_MODE=api — frontend not started, supervising uvicorn"
+  wait "$API_PID" || true
+  echo "[entrypoint] uvicorn exited — shutting down"
+  shutdown
+fi
+
+echo "[entrypoint] starting frontend on :3000"
 cd /app/frontend
 node node_modules/next/dist/bin/next start -H 0.0.0.0 -p 3000 &
 FE_PID=$!

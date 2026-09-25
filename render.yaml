@@ -1,0 +1,32 @@
+# Stage 11 (adapted) — Render Blueprint: API service only.
+#
+# Deviation from PRD 11.1 (EC2): no AWS/GCP account on our side — the API
+# deploys here as the PREBUILT Docker Hub image CI pushes on every main
+# push (model.joblib is baked in, so Render never runs DVC). The UI lives
+# on Vercel (HTTPS → getUserMedia stays alive; PRD 11.3 decision).
+# Render free exposes ONE port per service, hence APP_MODE=api in
+# entrypoint.sh. Free instances spin down after 15 min idle (~30-60s cold
+# start) — keep-alive ping or expect warmup on demo day.
+services:
+  - type: web
+    name: chewsy-api
+    runtime: image
+    plan: free
+    region: oregon
+    image:
+      url: docker.io/premthatikonda2903/chewsy:latest
+      creds:
+        fromRegistryCreds:
+          # add a Docker Hub credential with this exact name in the
+          # Render workspace (the repo is private): Account → Credentials
+          name: dockerhub-chewsy
+    envVars:
+      - key: APP_MODE
+        value: api
+      - key: MLFLOW_DISABLE_AGENT_HINT
+        value: "1"
+      - key: FRONTEND_ORIGINS
+        # set to the Vercel URL after the UI project exists
+        # (comma-separated if preview + production URLs differ)
+        sync: false
+    healthCheckPath: /health
