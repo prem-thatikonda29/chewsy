@@ -1186,13 +1186,50 @@ time here.
   ✅ Committed with `Dockerfile`, `entrypoint.sh`, `.dockerignore` + this note.
 
 ### Stage 9 — CI/CD to Docker Hub
-- [ ] 9.1 `.github/workflows/ci.yml`: on every push — run `pytest`, then (only
+- [x] 9.1 `.github/workflows/ci.yml`: on every push — run `pytest`, then (only
   if tests pass) `docker build` + `docker push` to Docker Hub using repo
   secrets for credentials.
   **Done when:** a push to `main` results in a new tagged image visible on
   Docker Hub, triggered by GitHub Actions — not a manual `docker push` from
   your laptop.
-- [ ] 9.2 Commit: `ci: GitHub Actions build + push to Docker Hub`.
+  ✅ As-built: three jobs — `test` (setup-python **3.12** to match the
+  shap pin, pip cache, `dvc pull`, `pytest -q` — every push), `frontend`
+  (`npm ci` → typecheck → lint → build — every push; **enhancement**,
+  the PRD only names pytest and the frontend had zero CI otherwise), and
+  `docker` (`needs: test` = "only if tests pass"; additionally gated to
+  `push` + `refs/heads/main` so feature pushes never touch Docker Hub:
+  `dvc pull` → `docker login` → build → push `:latest` **and**
+  `:sha-<7>`). **Secrets** (repo, set 25 Sep 2026 via `gh`):
+  `AWS_ACCESS_KEY_ID`/`AWS_SECRET_ACCESS_KEY` (the HF S3 pair from local
+  `.dvc/config.local` — values never echoed) + `DOCKERHUB_USERNAME`/
+  `DOCKERHUB_TOKEN` (PAT validated with a local `docker login` first);
+  the two `AWS_*_CHECKSUM` env vars mirror the local push/pull
+  requirement (botocore trailing-CRC32 vs the HF gateway).
+  **The first runs found two fresh-checkout portability bugs — both
+  fixed, both also break any clone on any new machine (not just CI):**
+  1. `test` failed `test_package.py` with `MlflowException: No such
+     artifact: ''` — `mlflow.db` stored **absolute paths from this
+     laptop** (`model_versions.storage_location`, `runs.artifact_uri`,
+     `experiments.artifact_location` all `/Users/prem…/mlruns/…`), and
+     the registry resolves `models:/chewsy-nova@champion` through
+     `storage_location`. Fix: all three columns relativized to
+     `mlruns/…` (cwd-relative; pytest/registry load run from repo
+     root). Proven by moving the local `mlruns/` away entirely and
+     still loading registry == joblib from a clone. Commit
+     `fix: relativize mlflow registry/run artifact paths…` (`3da0c3f`).
+  2. `frontend` failed typecheck: `Cannot find name 'LayoutProps'` —
+     Next generates that global into `.next/types/`, absent on a fresh
+     checkout and masked locally by build caches. Fix: `typecheck` =
+     `next typegen && tsc --noEmit` (verified with `.next/` deleted).
+     Commit `fix: typecheck generates route types first…` (`0946763`).
+  **Done-when evidence (run 36141265005):** `test: success`,
+  `frontend: success`, `docker: success`; image pulled back from Docker
+  Hub: `premthatikonda2903/chewsy:latest` digest
+  `sha256:730ae35f…` (3.87 GB — Python+Node+model baked; slimming is
+  optional future work, not a rubric item).
+- [x] 9.2 Commit: `ci: GitHub Actions build + push to Docker Hub`.
+  ✅ Committed as that message (`a669f50`) + the two CI-found fix
+  commits `3da0c3f`, `0946763`; first fully-green run: `36141265005`.
 
 ### Stage 10 — Wire Up the DVC Pipeline
 **Goal:** the whole thing becomes one re-runnable, versioned pipeline —
