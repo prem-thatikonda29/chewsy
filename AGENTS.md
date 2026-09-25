@@ -142,7 +142,8 @@ chewsy/
 │   └── data_quality_report.md (LOCAL ONLY — in .git/info/exclude,
 │                               never git add/push; append evidence)
 ├── Dockerfile                 (multi-stage: Node build + Python runtime)
-├── entrypoint.sh
+├── entrypoint.sh              (APP_MODE=api → API-only on $PORT, for Render)
+├── render.yaml                 (Stage 11: Render Blueprint, image-pull deploy)
 └── .github/workflows/ci.yml
 ```
 
@@ -315,6 +316,15 @@ and cut order are in PRD §3 and Hard rule 6.
   `dvc checkout models/model.joblib` (champion v4 byte-identical), and
   re-run the mlflow-path relativize (commit 3da0c3f) before pushing if a
   register ever ships.
+- **Cloud deploy (Stage 11, adapted — no AWS):** UI
+  `https://frontend-fawn-five-70.vercel.app` (Vercel, HTTPS → camera
+  works) → API `https://chewsy-api.onrender.com` (Render free,
+  `runtime: image` from the CI-pushed Docker Hub image, `APP_MODE=api`,
+  credential `dockerhub-chewsy`). Never build the image from the repo
+  on Render (model.joblib is gitignored → BuildKit cache-key error) —
+  CI's docker job owns image builds. `FRONTEND_ORIGINS` is read once at
+  startup: env changes need a **manual redeploy**. Free instances idle
+  out after 15 min (~30–60s cold start).
 
 ## Key commands
 

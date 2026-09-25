@@ -1291,21 +1291,39 @@ sequence of scripts you happened to run in order.
   git-checkout + `dvc checkout` (both shown above), never `dvc add`.
 
 ### Stage 11 — Cloud Deployment (bonus, only if on schedule)
-- [ ] 11.1 Launch EC2 instance, open ports 22/8000/3000 in the security
-  group.
-- [ ] 11.2 `docker run --restart unless-stopped` pulling the Docker Hub
-  image.
-  **Done when:** the UI is reachable from a browser using the instance's
-  public IP, not just `localhost`.
-- [ ] 11.3 **Known limitation — decide deliberately: `getUserMedia`
-  requires a secure context (HTTPS or `localhost` only).** A raw
-  `http://<ec2-ip>:3000` deploy means the camera silently fails
-  (`navigator.mediaDevices` is just `undefined`). Either front it with
-  HTTPS (a Cloudflare Tunnel or ngrok gives a real HTTPS URL in minutes,
-  no cert work), or accept the deployed build is manual-entry-only and
-  demo the camera from `localhost`. **Pick one and record it here before
-  presentation day** — don't discover it live. (7.10's insecure-context
-  message is the fallback if we stay on plain HTTP.)
+- [x] 11.1 ~~Launch EC2 instance, open ports 22/8000/3000 in the security
+  group.~~ **Adapted (no AWS/GCP account): API on Render free** —
+  deployed from the **CI-pushed Docker Hub image** (blueprint
+  `render.yaml`, `runtime: image` + registry credential), model baked in,
+  Render never runs DVC. Single exposed port per Render service →
+  `entrypoint.sh` gained `APP_MODE=api` (uvicorn only, on `$PORT`);
+  default both-mode unchanged (verified locally: api + both, SIGTERM
+  exit 0 in <0.4s). **First-deploy lesson:** creating the service from
+  the *GitHub repo* runs `docker build` in a checkout without
+  `model.joblib` (gitignored/DVC-only) → BuildKit
+  `"/models/model.joblib": not found`. The repo is deliberately not
+  self-buildable — the Blueprint/image-pull path is the only correct one.
+- [x] 11.2 `docker run --restart unless-stopped` pulling the Docker Hub
+  image. **Adapted done-when met:** UI reachable from a browser at
+  **https://frontend-fawn-five-70.vercel.app** (public URL, not
+  localhost) → API **https://chewsy-api.onrender.com**.
+  Verified server-side: `/health` `{"status":"ok","model_loaded":true}`;
+  preflight 200 with
+  `access-control-allow-origin: https://frontend-fawn-five-70.vercel.app`
+  (CORS env `FRONTEND_ORIGINS` set via render.yaml push + Blueprint
+  sync + manual redeploy — the app reads origins once at startup, so an
+  env change needs a restart); live `POST /predict` from Render's
+  network → Nutella `3017620422003` NOVA 4 @0.9989, Coca-Cola
+  `5449000000996` 200 + CORS header; frontend serves the real app
+  (`<title>Chewsy — scan a barcode…</title>`).
+- [x] 11.3 **Decision recorded: HTTPS via Vercel** — the UI on
+  `*.vercel.app` is a secure context, so `getUserMedia`/html5-qrcode
+  **camera scanning works on the deployed build** (the EC2-HTTP pitfall
+  never applies; no tunnel needed). Camera is therefore demoed from the
+  public Vercel URL directly, not from localhost. **Caveat:** Render
+  free instances **spin down after 15 min idle** → ~30–60s cold start
+  on the first scan after idle (health poll covers model load;
+  keep-alive ping optional if rehearsal shows it's annoying).
 
 ### Stage 12 — Lightweight Monitoring (trim to this if short on time)
 **Stage 2/3 handoff:** `training_reference.csv` should snapshot the
