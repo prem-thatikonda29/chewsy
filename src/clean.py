@@ -175,7 +175,11 @@ def report(df: pd.DataFrame) -> None:
     print()
 
 
-def clean(df: pd.DataFrame) -> pd.DataFrame:
+def clean(df: pd.DataFrame, verbose: bool = True) -> pd.DataFrame:
+    """Row-local cleaning. ``verbose=False`` silences the per-run prints
+    (Stage 6 calls this once per request -- see ``normalize_live_row``)."""
+    say = print if verbose else (lambda *a, **k: None)
+
     # PRD 2.5 -- leakage check as an actual code assertion (see module docstring).
     leaked = FORBIDDEN_LEAKAGE_FIELDS & set(df.columns)
     assert not leaked, f"Nutri-Score leakage field(s) in dataset: {leaked}"
@@ -183,7 +187,7 @@ def clean(df: pd.DataFrame) -> pd.DataFrame:
     # PRD 2.2 -- drop exact-duplicate barcodes, keep first.
     n_before = len(df)
     df = df.drop_duplicates(subset="code", keep="first").reset_index(drop=True)
-    print(f"dropped {n_before - len(df)} duplicate-code rows")
+    say(f"dropped {n_before - len(df)} duplicate-code rows")
 
     # --- missingness indicators (PRD 2.3) -------------------------------
     # Captured FIRST, on the original nulls: the indicator is about what the
@@ -234,7 +238,7 @@ def clean(df: pd.DataFrame) -> pd.DataFrame:
     for col in MASS_COLS:
         n_neg = int((df[col] < 0).sum())
         if n_neg:
-            print(f"{col}: {n_neg} negative value(s) -> NaN (kept NaN; imputed at train time)")
+            say(f"{col}: {n_neg} negative value(s) -> NaN (kept NaN; imputed at train time)")
             df.loc[df[col] < 0, col] = np.nan
 
     # Mass-basis value above 100 g/100g: decision = CAP at 100, not drop.
@@ -245,7 +249,7 @@ def clean(df: pd.DataFrame) -> pd.DataFrame:
     for col in MASS_COLS:
         n_over = int((df[col] > 100).sum())
         if n_over:
-            print(f"{col}: {n_over} value(s) > 100g -> capped at 100")
+            say(f"{col}: {n_over} value(s) > 100g -> capped at 100")
             df.loc[df[col] > 100, col] = 100.0
 
     # Energy above ~900 kcal/100g exceeds the physical maximum for any food
@@ -253,7 +257,7 @@ def clean(df: pd.DataFrame) -> pd.DataFrame:
     # rationale as negatives.
     n_hot = int((df[ENERGY_COL] > MAX_ENERGY_KCAL).sum())
     if n_hot:
-        print(f"{ENERGY_COL}: {n_hot} value(s) > {MAX_ENERGY_KCAL:.0f} kcal -> NaN (kept NaN; imputed at train time)")
+        say(f"{ENERGY_COL}: {n_hot} value(s) > {MAX_ENERGY_KCAL:.0f} kcal -> NaN (kept NaN; imputed at train time)")
         df.loc[df[ENERGY_COL] > MAX_ENERGY_KCAL, ENERGY_COL] = np.nan
 
     # saturated fat cannot exceed total fat: decision = NaN the sat-fat side
@@ -261,7 +265,7 @@ def clean(df: pd.DataFrame) -> pd.DataFrame:
     # row-local fix. The NaN is left in place for train-time imputation.
     bad = (df["saturated_fat_100g"] > df["fat_100g"]) & df["saturated_fat_100g"].notna()
     if bad.any():
-        print(f"saturated_fat_100g: {int(bad.sum())} row(s) > fat_100g -> NaN (kept NaN; imputed at train time)")
+        say(f"saturated_fat_100g: {int(bad.sum())} row(s) > fat_100g -> NaN (kept NaN; imputed at train time)")
         df.loc[bad, "saturated_fat_100g"] = np.nan
 
     # --- energy cross-consistency (analysis-driven) ---------------------
@@ -274,7 +278,7 @@ def clean(df: pd.DataFrame) -> pd.DataFrame:
     )
     dead = (df[ENERGY_COL] == 0) & (est >= 20) & df[ENERGY_COL].notna()
     if dead.any():
-        print(f"{ENERGY_COL}: {int(dead.sum())} zero(s) contradicting macros -> NaN (kept NaN; imputed at train time)")
+        say(f"{ENERGY_COL}: {int(dead.sum())} zero(s) contradicting macros -> NaN (kept NaN; imputed at train time)")
         df.loc[dead, ENERGY_COL] = np.nan
     # Rule 2: reported energy vs Atwater estimate outside [0.3, 3.0] --
     # one of the two independently-reported fields is wrong and we cannot
@@ -282,7 +286,7 @@ def clean(df: pd.DataFrame) -> pd.DataFrame:
     ratio = df[ENERGY_COL] / est.replace(0, np.nan)
     wild = df[ENERGY_COL].notna() & ((ratio > ENERGY_RATIO_HI) | (ratio < ENERGY_RATIO_LO))
     if wild.any():
-        print(
+        say(
             f"{ENERGY_COL}: {int(wild.sum())} value(s) inconsistent with macros "
             f"(ratio outside [{ENERGY_RATIO_LO}, {ENERGY_RATIO_HI}]) -> NaN "
             f"(kept NaN; imputed at train time)"
@@ -326,6 +330,68 @@ def clean(df: pd.DataFrame) -> pd.DataFrame:
     assert not leaked, f"Nutri-Score leakage field(s) after cleaning: {leaked}"
 
     return df
+
+
+# --- Stage 6: the same cleaning, applied to ONE live Open Food Facts row ---
+# Column schema mirrors Stage 1's flatten_hit() input space: a raw product
+# response must carry these names before clean() can process it (off_client
+# does the API-JSON -> this mapping).
+LIVE_ROW_COLUMNS = [
+    "code",
+    "product_name",
+    "brands",
+    "categories_tags",
+    TEXT_COL,
+    "additives_n",
+    "ingredients_n",
+    "unknown_ingredients_n",
+] + NUTRIENT_COLS
+
+NUMERIC_LIVE_COLS = NUTRIENT_COLS + [
+    "additives_n",
+    "ingredients_n",
+    "unknown_ingredients_n",
+]
+
+
+def normalize_live_row(raw: dict) -> dict:
+    """PRD 6 stage-2/3 handoff: run a single raw OFF row through clean().
+
+    One source of truth: the API row gets the EXACT Stage 2 row-local
+    normalizations the training data got (brand list-repr parse + lowercase,
+    HTML-unescape, mass cap at 100 g, negatives/impossible energy -> NaN,
+    sat-fat > fat -> NaN, Atwater cross-check, count columns -> 0, text
+    normalization) -- applied here as ``clean(df, verbose=False)`` on a
+    one-row frame, never as a duplicated copy of the logic.
+
+    What this deliberately does NOT do: impute NaNs -- that stays in the
+    pipeline (GroupMedianImputer, fit on train rows only). Missingness
+    indicators ARE built here by clean() from the row's original nulls,
+    exactly as Stage 2 built them before its anomaly decisions;
+    FeatureCreator then preserves them instead of recomputing.
+
+    Hard rule 11: asserts ``nova_group`` and the Nutri-Score leakage fields
+    are absent from the incoming row -- OFF's stored labels must never reach
+    the feature frame. ``app/off_client.py`` strips them from the response;
+    this is the second, independent guard (same pattern as PRD 2.5).
+    """
+    leaked = FORBIDDEN_LEAKAGE_FIELDS & set(raw)
+    assert not leaked, f"Nutri-Score leakage field(s) in live row: {leaked}"
+    assert "nova_group" not in raw, (
+        "Hard rule 11: OFF's stored nova_group must never reach the "
+        "feature row -- the model computes the verdict itself"
+    )
+
+    row = {c: raw.get(c, np.nan) for c in LIVE_ROW_COLUMNS}
+    df = pd.DataFrame([row])
+    for col in NUMERIC_LIVE_COLS:
+        # API nutriments arrive as numbers OR numeric strings
+        df[col] = pd.to_numeric(df[col], errors="coerce")
+
+    df = clean(df, verbose=False)
+    out = df.iloc[0].to_dict()
+    assert "nova_group" not in out
+    return out
 
 
 def main() -> None:

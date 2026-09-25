@@ -601,7 +601,7 @@ matches what the champion was packaged with.
 
 **Goal:** this is where the "live" feeling of the product actually lives.
 
-- [ ] 6.1 `app/off_client.py`: a function `fetch_product(barcode: str)` that
+- [x] 6.1 `app/off_client.py`: a function `fetch_product(barcode: str)` that
   calls `https://world.openfoodfacts.org/api/v2/product/{barcode}.json`,
   with a timeout (e.g. 5s) and a clear fallback/error path if the barcode
   isn't found or the API is unreachable — **do not let this crash the
@@ -612,12 +612,30 @@ matches what the champion was packaged with.
   from `fetch_training_set.py`). The model must compute the verdict from
   raw nutrients/ingredients only, never read OFF's stored label, even
   when one exists.
-- [ ] 6.2 `app/schemas.py`: Pydantic request/response models for
+  — done: `fetch_product` uses `requests.get(timeout=5.0)` + a
+  `User-Agent`; failures raise typed `ProductNotFound` / `OffAPIUnavailable`
+  which `main.py` maps to **404 / 503** (verified live: `0000000000000` →
+  404, timeout class → 503). `FORBIDDEN_RESPONSE_FIELDS =
+  FORBIDDEN_LEAKAGE_FIELDS ∪ {nova_group}` is stripped by
+  `strip_forbidden()` (asserts nothing survives) and re-asserted twice
+  downstream (`normalize_live_row`, `build_feature_frame`) — three
+  independent guards, same pattern as PRD 2.5. `extract_feature_input()`
+  mirrors Stage 1's `flatten_hit()` mapping (`energy-kcal_100g` kcal, not
+  the kJ `energy_100g`; comma-joined `categories_tags`; tag-derived
+  pseudo-text) so live rows look like training rows.
+- [x] 6.2 `app/schemas.py`: Pydantic request/response models for
   `POST /predict` (input: barcode string; output: NOVA class, confidence,
   top SHAP features for this prediction). Field names/docstrings must
   make clear the NOVA class is **model-computed** (e.g.
   `predicted_nova`), not fetched from Open Food Facts.
-- [ ] 6.3 `app/main.py`:
+  — done: `PredictRequest` (barcode, `^\d{6,14}$` → 422 on junk) and
+  `PredictResponse(predicted_nova, nova_label, confidence,
+  class_probabilities, shap_top_features)`; docstrings state explicitly
+  that the class comes from `model.joblib` and that `nova_group` is
+  stripped and never echoed. **Approved enhancement:** `product_name` +
+  `image_url` included — Stage 7.5's result view needs them from this
+  response.
+- [x] 6.3 `app/main.py`:
   - Load `model.joblib` once at startup (lifespan event), not per-request.
   - `GET /health` — trivial liveness check.
   - `POST /predict` — takes a barcode, calls `off_client.fetch_product`,
@@ -631,9 +649,33 @@ matches what the champion was packaged with.
     Next.js origin — the browser will block the frontend's fetch calls
     without this, and it's the single most common "works with curl, fails
     in the browser" bug you'll hit in Stage 7.
-- [ ] 6.4 `tests/test_api.py`: at minimum, test `/health` returns 200 and
+  — done: lifespan loads the joblib once and builds a **cached
+  `shap.TreeExplainer`** over the unwrapped `XGBClassifier` plus the 44
+  feature names (same `named_steps` navigation as `train.py::feature_names`);
+  `/predict` = fetch → `normalize_live_row` → `score_row` → top-5 SHAP
+  values for the **predicted** class (`NovaLabelAdapter` maps NOVA
+  `p` → estimator column `p-1`); `/metrics` = requests/errors/avg latency
+  (live: ~520 ms/scan incl. OFF fetch); CORS origins from env
+  `FRONTEND_ORIGINS` (default `http://localhost:3000`) — verified the
+  `access-control-allow-origin` header on an OPTIONS preflight. SHAP
+  features are the real engineered columns (`num__…`, `text__…`,
+  `cat_tagfreq__…`), never PCA components.
+- [x] 6.4 `tests/test_api.py`: at minimum, test `/health` returns 200 and
   `/predict` returns a well-formed response for one known real barcode.
-- [ ] 6.5 `src/batch_predict.py`: loads `model.joblib` once, takes a CSV of
+  — done: 17 tests. A **captured real OFF payload**
+  (`tests/fixtures/off_product_3017620422003.json`, keeps `nova_group=4`
+  + the Nutri-Score family on purpose) is served via a monkeypatched
+  `fetch_product`, so the default suite makes **zero network calls**
+  (CI-safe, Stage 9). Covers: leak-guard stripping, `nova_group`/Nutri-Score
+  rejection, Stage 2 normalization on the live row (incl. kcal-not-kJ),
+  `/health`, `/metrics` increments, well-formed `/predict` (≤5 SHAP
+  features, probs sum to 1, no forbidden key anywhere in the body),
+  route-equals-direct-model, 404/503/422, and batch scoring with failure
+  isolation. True end-to-end live test gated by `CHEWSY_LIVE_OFF=1`
+  (passes). Full suite: **47 passed, 1 gated skip**.
+  **Approved deviation:** added `httpx==0.28.1` to `requirements.txt` —
+  `fastapi.testclient` requires it.
+- [x] 6.5 `src/batch_predict.py`: loads `model.joblib` once, takes a CSV of
   barcodes as input, scores all of them, writes predictions to an output
   CSV. This is the "batch vs. real-time inference" phase from the mindmap
   — the API handles one request at a time; this script is for scoring a
@@ -641,7 +683,12 @@ matches what the champion was packaged with.
   different use case (and a nice thing to mention in the pitch: "this is
   literally how you'd backfill NOVA labels for the products the community
   hasn't gotten to yet").
-- [ ] 6.6 Commit: `feat: FastAPI prediction service + batch scoring script`.
+  — done: `--input/--output/--barcode-col`; reuses the API's scoring path
+  (`app.main.score_row` — one source of truth, no SHAP since explanations
+  are a per-scan UI concern); per-barcode failures become an `error` column
+  instead of aborting the batch. Live run over 4 barcodes: **3 scored +
+  1 clean "not found" error**, ~0.5 s/barcode.
+- [x] 6.6 Commit: `feat: FastAPI prediction service + batch scoring script`.
 
 ### Stage 7 — Next.js Frontend
 **Goal:** a real, camera-driven scanner UI — not a form. This is the layer
