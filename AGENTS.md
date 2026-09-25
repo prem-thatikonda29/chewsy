@@ -178,7 +178,7 @@ Work the PRD stages in order (0→13). For each stage:
 Priority reminder: MUST = non-negotiable; SHOULD = cut if behind. Timeline blocks
 and cut order are in PRD §3 and Hard rule 6.
 
-## As-built interfaces (Stages 0–5, as of 25 Sep 2026)
+## As-built interfaces (Stages 0–6, as of 25 Sep 2026)
 
 - **Data:** `data/processed/openfoodfacts_clean.csv` — 19,998 × 22,
   DVC-tracked; nutrient NaNs are **retained on purpose** (45,453 nulls)
@@ -252,6 +252,28 @@ and cut order are in PRD §3 and Hard rule 6.
   `pytest`. **Stage 10:** `dvc remove` the static `*.dvc` pointers
   (data + model) before pipeline `outs` claim the same files.
   `requirements.txt` pins `dvc[s3]==3.67.1`.
+- **Serving (Stage 6, as built):** `uvicorn app.main:app --port 8000` —
+  lifespan loads `models/model.joblib` once and caches a
+  `shap.TreeExplainer` + the 44 feature names. `POST /predict` =
+  `off_client.fetch_product` (5s timeout, typed `ProductNotFound`/
+  `OffAPIUnavailable` → 404/503) → `off_client.extract_feature_input`
+  (mirrors `flatten_hit()`: **`energy-kcal_100g`, never the kJ
+  `energy_100g`**) → `src/clean.py::normalize_live_row` (runs
+  `clean(df, verbose=False)` on the one row — single cleaning code path;
+  `clean()`'s only change for Stage 6 is the new `verbose` param) →
+  `app.main.score_row` (one scoring path shared with batch) → top-5 SHAP
+  for the predicted class (NOVA p → adapter column p−1). Also
+  `GET /health`, `GET /metrics` (in-memory counters), CORS origins from
+  env `FRONTEND_ORIGINS` (default `http://localhost:3000`). **Three Hard
+  rule 11 guards:** `off_client.strip_forbidden` → `normalize_live_row`
+  asserts → `score_row` asserts. Response fields `predicted_nova` /
+  `confidence` / `shap_top_features` + `product_name`/`image_url` (for
+  Stage 7.5) — never OFF's label. Tests `tests/test_api.py` (17): zero
+  network by default (fixture `tests/fixtures/off_product_3017620422003.json`
+  deliberately keeps `nova_group`+Nutri-Score to prove stripping); live
+  e2e gated by `CHEWSY_LIVE_OFF=1`. Batch: `python src/batch_predict.py
+  --input b.csv --output p.csv` (reuses `score_row`, per-row error
+  isolation). Dep added: `httpx==0.28.1` (fastapi TestClient).
 - **Evidence:** `python src/features.py` prints skew/filter/PCA/SVD
   numbers. Full evidence log: `docs/data_quality_report.md` —
   **local-only** (listed in `.git/info/exclude`): append each stage's
@@ -290,6 +312,9 @@ mlflow ui   # sqlite:///mlflow.db
 # Local serving
 uvicorn app.main:app --reload --port 8000
 cd frontend && npm install && npm run dev   # Next.js on :3000
+
+# Batch scoring (Stage 6.5)
+python src/batch_predict.py --input barcodes.csv --output predictions.csv
 
 # Container (API :8000, frontend :3000)
 docker build -t chewsy .
