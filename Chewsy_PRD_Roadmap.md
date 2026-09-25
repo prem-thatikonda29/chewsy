@@ -9,10 +9,23 @@
 
 ## 1. Product Overview
 
-**One-liner:** A Yuka-style barcode scanner. You type or look up a real product
-barcode, the backend live-fetches that product from the Open Food Facts public
-API, a trained model predicts its **NOVA processing level (1–4)**, and the UI
-shows the verdict plus a SHAP explanation of *why*.
+**One-liner:** A scanner that answers two separate questions about a
+product: **how it's made** (NOVA 1–4, model-computed from ingredients) and
+**what's in it** (nutrient traffic lights computed from published NHS
+thresholds). You scan or type a real product barcode, the backend
+live-fetches it from the Open Food Facts public API, the frozen model
+computes the processing class, and the UI shows both axes plus a SHAP
+explanation of *why*.
+
+**Design principle (binding — drives Stage 6.7 and Stage 7):**
+**NOVA is a descriptor, never a verdict.** The model classifies industrial
+formulation, not healthiness. The UI must never present a NOVA class as a
+judgement on whether a food is good or bad. Muesli is NOVA 4 and
+nutritionally fine — both are true, and the UI must be able to say both.
+(Trigger: the muesli scan — model said NOVA 4, no bug found; the bug was
+the headline. SHAP showed `additives_n` at −1.62 *arguing against* class 4,
+i.e. the model isn't equating "many additives" with "ultra-processed" —
+it reads industrial formulation from ingredients text + count.)
 
 **Why it matters (use this framing in the pitch, not "I analyzed a dataset"):**
 Open Food Facts is real, crowdsourced, and — critically — **most products in it
@@ -50,13 +63,23 @@ in a classification the community hasn't gotten to yet, the same job Yuka
 3 = processed foods, 4 = ultra-processed foods.
 
 **Non-goals (say this explicitly if asked, don't apologize for it):**
-- Not predicting Nutri-Score — that's a public formula on nutrient columns;
-  predicting it would be reverse-engineering arithmetic, not real ML.
+- Not predicting, computing, or displaying Nutri-Score — OFF's or our own.
+  Predicting it would be reverse-engineering arithmetic, not real ML;
+  displaying it would put a computed grade next to our model's output and
+  muddy the two axes we actually own (traffic lights are published-threshold
+  lookups, not a score).
 - Not building a meal-logging or calorie-tracking app.
 - Not attempting global coverage — training pulls are class-balanced and
   deliberately capped (5000/class in Stage 1, under the API's 10,000/class
   hard ceiling), not a full-corpus crawl;
   India is a demo story, not a training filter (see Stage 1).
+
+**Hard rule 12 (new — sync into AGENTS.md "Hard rules" at next chore):**
+**Traffic lights are computed locally from `nutrition_100g`, never
+fetched.** The nutrition axis is a deterministic threshold lookup applied
+to nutrients already in the response. No OFF-derived grade
+(`nutrition_grades`, `nutriscore_*`) may enter the response or the UI —
+same exclusion as the feature set (Hard rule 2).
 
 ---
 
@@ -111,7 +134,8 @@ chewsy/
 │   ├── features.py                 (Stage 3 — custom transformers)
 │   ├── train.py                    (Stage 4)
 │   ├── package.py                  (Stage 5 — registry → model.joblib + reference)
-│   └── batch_predict.py             (Stage 6 — offline scoring of a CSV of barcodes)
+│   ├── batch_predict.py             (Stage 6 — offline scoring of a CSV of barcodes)
+│   └── nutrition_flags.py           (Stage 6.7 — NHS traffic-light bands + headline rule)
 ├── models/
 │   ├── model.joblib            (Stage 5, gitignored — DVC-tracked: model.joblib.dvc)
 │   └── training_reference.csv  (Stage 12 — drift baseline, git-committed)
@@ -703,49 +727,128 @@ matches what the champion was packaged with.
   before anything is sent to OFF.
 - [x] 6.6 Commit: `feat: FastAPI prediction service + batch scoring script`.
 - [ ] 6.7 **Scope addition (approved 25 Sep 2026 — NOT yet built; planned
-  together with Stage 7):** extend `PredictResponse` with the facts a
-  scan-result screen needs (data is already in hand during scoring — zero
-  extra API calls):
+  together with Stage 7; extended same day with the two-axis reframe):**
+  extend `PredictResponse` with the facts a scan-result screen needs (data
+  is already in hand during scoring — zero extra API calls):
   - `nutrition_100g`: the 8 per-100g values taken from the **normalized**
     row (Stage 2 clean values — capped, invalid → `null`; frontend renders
     `null` as "—", never a raw impossible number),
   - `additives_n`, `ingredients_n` (ints),
-  - `ingredients_text` (raw OFF text — what's actually on the package).
-  Must NOT add any OFF label field (Hard rule 11 unchanged); extend
+  - `ingredients_text` (raw OFF text — what's actually on the package),
+  - **`traffic_lights`**: `sugars`, `fat`, `saturated_fat`, `salt` →
+    `"low" | "medium" | "high" | null` — `null` when the nutrient is
+    missing; never guess a band,
+  - **`positives`**: `fiber`, `proteins` → `"good" | "moderate" | "low" |
+    null` (same null rule),
+  - **`headline`**: the combined one-liner (rule below).
+  Must NOT add any OFF label field (Hard rules 11 + 12 unchanged); extend
   `tests/test_api.py` to assert the new fields (e.g. Nutella: energy 539,
-  salt 0.107). Feeds Stage 7.8's facts panel.
+  salt 0.107). Feeds Stage 7.8's facts panel and 7.5's hero.
+
+  **Traffic-light thresholds, per 100g (current NHS/FSA guidance):**
+
+  | Nutrient | Low (green) | Medium (amber) | High (red) |
+  |---|---|---|---|
+  | Sugars | ≤ 5g | > 5–22.5g | > 22.5g |
+  | Fat | ≤ 3g | > 3–17.5g | > 17.5g |
+  | Saturated fat | ≤ 1.5g | > 1.5–5g | > 5g |
+  | Salt | ≤ 0.3g | > 0.3–1.5g | > 1.5g |
+
+  **Documented decisions (put both as code comments):**
+  1. These are the **current NHS figures**, not the older 2007 FSA ones
+     (which used fat 20g, sugars 15g) — a judge who knows the scheme may
+     check which version we used.
+  2. Thresholds are for **solids per 100g**; drinks have separate, lower
+     thresholds. **Decision: beverages are explicitly scoped out in v1** —
+     a comment in `src/nutrition_flags.py` says the bands assume solids;
+     handling drinks via `categories_tags` is a noted future extension,
+     not build-time logic.
+  3. Fibre and protein have **no official traffic-light thresholds** (the
+     FSA scheme covers only the four nutrients of concern). `positives`
+     bands are clearly-labelled **custom** bands (fibre: good ≥6g,
+     moderate ≥3g — anchored to EU "source of fibre" claim levels;
+     protein: good ≥10g, moderate ≥5g — pragmatic custom cut) and must
+     never be called "traffic lights" in the API docs or UI. **Cut
+     first if behind schedule** — the four traffic lights carry the whole
+     argument alone.
+
+  **New file `src/nutrition_flags.py`** — one home for thresholds,
+  headline rule, and band helpers; imported by the API, unit-testable in
+  isolation (Hard rule 4's "no inline logic" spirit).
+
+  **Headline rule** — four quadrants from (NOVA ≤2 vs ≥3) × (any red vs
+  none):
+
+  | Processing | Nutrients | Headline |
+  |---|---|---|
+  | Low (1–2) | No reds | "Minimally processed and nutritionally solid" |
+  | Low (1–2) | Has reds | "Minimally processed, but high in [nutrient]" |
+  | High (3–4) | No reds | "Ultra-processed, but nutritionally decent" |
+  | High (3–4) | Has reds | "Ultra-processed and high in [nutrient]" |
+
+  Wording refinement (build-time, deliberate): render "…**Processed**,
+  but nutritionally decent" when predicted class = 3 and "…**Ultra**-processed…"
+  only for class 4 — class 3 is processed, not ultra-processed, and a
+  judge will notice. Red-noun list: `sugars → sugar`, `fat → fat`,
+  `saturated_fat → saturated fat`, `salt → salt`.
+
+  **Edge case:** when all four traffic lights are `null` (~17% of training
+  rows report no nutrients at all — Stage 2 findings), fall back to a
+  processing-only headline and state that nutrition data is unavailable —
+  never imply the product is fine.
+
+  **Tests (`tests/test_api.py` additions):**
+  - Nutella (sugars ~56.3, salt ~0.107) → sugars `high`, salt `low`,
+  - a product with a missing nutrient → key is `null`, not a fabricated
+    band,
+  - boundaries: exactly 5.0 sugars → `low`; exactly 22.5 → `medium`
+    (lock the inclusive/exclusive edges against the table above).
 
 ### Stage 7 — Next.js Frontend
 **Goal:** a real, camera-driven scanner UI — not a form. This is the layer
 that has to feel like a product, so it gets more care than a typical
 course-project UI.
 
-**Result-screen design (approved 25 Sep 2026 — brainstormed scope change):**
+**Result-screen design (approved 25 Sep 2026 — brainstormed scope change;
+revised same day after the muesli finding — two-axis reframe):**
 Structure = **single scrollable result card** (approach chosen over
 tabbed/accordion variants: nothing hidden from judges, least interactive
 state to break in Stage 8's container). Top → bottom:
-1. **Hero** — image, product name, barcode (small mono), color-coded
-   verdict badge (green→red across NOVA 1→4) + plain label, confidence
-   chip with tier word: ≥0.8 "Confident" · 0.6–0.8 "Fairly sure" ·
-   <0.6 **or** top-2 gap <15 pts → "**Borderline**" (honest for
-   cheese-stick-type 0.87/0.12 results).
-2. **Probability distribution** — 4 bars, each labeled with class name +
+1. **Hero** — image, product name, barcode (small mono), **`headline`
+   from 6.7 as the largest text** (the card leads with the combined
+   two-axis sentence, not the badge), confidence chip with tier word:
+   ≥0.8 "Confident" · 0.6–0.8 "Fairly sure" · <0.6 **or** top-2 gap
+   <15 pts → "**Borderline**" (honest for cheese-stick-type 0.87/0.12
+   results).
+2. **Two-axis row** — side by side: "How it's made: NOVA 4 ·
+   Ultra-processed" | "What's in it: 4 nutrient chips" (green/amber/red
+   traffic lights from 6.7's `traffic_lights`).
+3. **Probability distribution** — 4 bars, each labeled with class name +
    %, predicted class highlighted; makes model ambiguity *visible*.
-3. **Why — SHAP chart** (`recharts`, PRD 7.5 baseline) — top-5, sign =
+4. **Why — SHAP chart** (`recharts`, PRD 7.5 baseline) — top-5, sign =
    toward/away from verdict; humanized labels (`num__additives_n` →
    "Number of additives", SVD components → "learned ingredient-text
    signal").
-4. **Facts panel** — per-100g nutrition grid + additive/ingredient counts
+5. **Facts panel** — per-100g nutrition grid + additive/ingredient counts
    + full ingredient list (needs 6.7).
-5. **NOVA explainer** — the only collapsed element (tap "What is NOVA
-   1–4?").
-6. Footer microcopy: *"Chewsy model verdict — computed from ingredients,
+6. **NOVA explainer** — **promoted from collapsed** (now always visible
+   after the axes row), with the line: *"NOVA describes how a food is
+   made, not how nutritious it is."* The descriptor-not-verdict principle
+   (§1) stated on the card itself.
+7. Footer microcopy: *"Chewsy model verdict — computed from ingredients,
    not copied from OFF"* (pitch credibility).
+
+**Colour change (binding):** the NOVA badge **stops being green→red** —
+red reads as "bad," which is the exact conflation being fixed. Use a
+neutral ramp (light→dark blue, or grey→charcoal) for processing level.
+Green/amber/red is reserved **exclusively** for nutrient chips, where it
+matches the published FSA meaning.
+
 Plus: session **scan-history chips** (last 10) on the scanner screen and a
 "Scan another" reset. Scope tiers chosen: A (existing response fields) +
 B (frontend-only) + C (6.7 response extension). **Rejected:** tabbed
-layout, showing OFF's `nova_group`/Nutri-Score (Hard rule 11 + leakage
-optics with judges), anything requiring a second backend fetch.
+layout, showing OFF's `nova_group`/Nutri-Score (Hard rules 11 + 12),
+anything requiring a second backend fetch.
 
 - [ ] 7.1 Scaffold with `create-next-app` (TypeScript, App Router) inside
   `frontend/`.
@@ -755,6 +858,29 @@ optics with judges), anything requiring a second backend fetch.
   formats real grocery barcodes use, not just QR codes). Decoding happens
   entirely in the browser; only the decoded barcode *string* gets sent to
   the backend.
+
+  **Mechanism (record for the PRD's own sake):** decoding reads **bar
+  widths, not printed digits** — it is not OCR and needs no text
+  extraction. EAN-13's 13th digit is a checksum recomputed by the decoder,
+  so a decode either succeeds correctly or emits nothing — no invalid
+  barcode can reach the API. The only thing sent to the backend is a digit
+  string, which the existing `^\d{6,14}$` validator already handles —
+  **backend needs zero changes.** Comment this in the component (checksum
+  validation makes decodes self-validating — no extra client-side barcode
+  validation needed).
+
+  **Config specifics:**
+  - Restrict formats to `EAN_13`, `UPC_A`, `EAN_8` — scanning all formats
+    every frame is measurably slower; these three cover Indian, European
+    and US packaging.
+  - `facingMode: 'environment'` for the rear camera.
+  - Stop the camera stream on successful decode — otherwise it keeps
+    firing and double-submits.
+
+  **Keep `html5-qrcode`. Do NOT switch to the native `BarcodeDetector`
+  API:** Safari/iOS has it disabled by default even currently, Firefox
+  doesn't support it, and Chrome desktop ships it only on macOS/ChromeOS —
+  not Windows or Linux.
 - [ ] 7.3 Keep a manual text-entry fallback input alongside the camera view
   (not a compromise — every real scanner app has this, for when lighting
   or focus fails mid-demo).
@@ -764,11 +890,13 @@ optics with judges), anything requiring a second backend fetch.
   "one source of truth" principle the mindmap describes for Streamlit,
   just carried over to this stack.
 - [ ] 7.5 Result view (single scroll card per the approved design above):
-  product name/image from the API response, a color-coded NOVA verdict
-  badge (green→red across 1→4) + plain label, confidence chip with tier
-  word (Confident / Fairly sure / Borderline), and the SHAP top-features
-  rendered as a simple bar chart (e.g. `recharts`) with humanized
-  feature labels.
+  product name/image from the API response, **`headline` as the largest
+  text**, two-axis row ("How it's made" NOVA badge on a **neutral
+  light→dark ramp — never green→red** · "What's in it" 4 nutrient chips
+  green/amber/red — colours reserved for traffic lights only), confidence
+  chip with tier word (Confident / Fairly sure / Borderline), and the
+  SHAP top-features rendered as a simple bar chart (e.g. `recharts`) with
+  humanized feature labels.
 - [ ] 7.6 `NEXT_PUBLIC_API_URL` as an env var, not a hardcoded localhost URL
   — you'll need this to differ between local dev and the Docker/EC2 build.
 - [ ] 7.7 `components/ProbabilityBars.tsx`: the 4-class distribution —
@@ -778,13 +906,17 @@ optics with judges), anything requiring a second backend fetch.
 - [ ] 7.8 Facts panel: per-100g nutrition grid (`null` → "—"), additive +
   ingredient counts, full ingredient list — **depends on 6.7** (do 6.7
   first; it is a backend change with its own tests).
-- [ ] 7.9 Scan flow extras: NOVA explainer (the one collapsed element),
-  session scan-history chips (last 10: "Nutella → 4"), "Scan another"
-  reset.
+- [ ] 7.9 Scan flow extras: NOVA explainer (per revised design: **always
+  visible**, not collapsed — carries the "how it's made ≠ how nutritious
+  it is" line), session scan-history chips (last 10: "Nutella → 4"),
+  "Scan another" reset.
 - [ ] 7.10 Error/edge states + typing: 404 → "Product not found in OFF",
-  503/network → "OFF unreachable — retry" with retry button, camera
-  denied → manual entry emphasized, missing image → placeholder;
-  `types/predict.ts` mirrors the Pydantic response schema exactly.
+  503/network → "OFF unreachable — retry" with retry button, missing
+  image → placeholder; `types/predict.ts` mirrors the Pydantic response
+  schema exactly. **Camera errors:** `navigator.mediaDevices` undefined
+  (insecure context) → manual entry + explicit "camera requires HTTPS"
+  message, not a broken viewfinder; permission denied → manual entry
+  emphasized; no camera device found → manual entry.
 - [ ] 7.11 Verification: `npm run typecheck` + `npm run build` green, one
   manual camera e2e against the local API, and 6.7's extended pytest
   suite green (no frontend test suite required by the PRD).
@@ -842,6 +974,15 @@ sequence of scripts you happened to run in order.
   image.
   **Done when:** the UI is reachable from a browser using the instance's
   public IP, not just `localhost`.
+- [ ] 11.3 **Known limitation — decide deliberately: `getUserMedia`
+  requires a secure context (HTTPS or `localhost` only).** A raw
+  `http://<ec2-ip>:3000` deploy means the camera silently fails
+  (`navigator.mediaDevices` is just `undefined`). Either front it with
+  HTTPS (a Cloudflare Tunnel or ngrok gives a real HTTPS URL in minutes,
+  no cert work), or accept the deployed build is manual-entry-only and
+  demo the camera from `localhost`. **Pick one and record it here before
+  presentation day** — don't discover it live. (7.10's insecure-context
+  message is the fallback if we stay on plain HTTP.)
 
 ### Stage 12 — Lightweight Monitoring (trim to this if short on time)
 **Stage 2/3 handoff:** `training_reference.csv` should snapshot the
@@ -863,9 +1004,19 @@ null-rate change: OFF pages that stop recording fiber show up as a rising
 - [ ] 13.1 Slides: problem (Yuka framing) → live demo → brief technical
   depth (pick 2–3 "why this, not that" moments to go deep on, don't try to
   narrate every stage above) → MLOps pipeline diagram → close.
-- [ ] 13.2 Rehearse the live demo with **3 real barcodes** picked in advance
-  — one confidently NOVA 1, one confidently NOVA 4, one genuinely
-  ambiguous (best for the SHAP-explanation moment).
+  **Add the muesli beat:** the model said NOVA 4 on a product that sounds
+  healthy; investigation found no bug — *the bug was the headline*, so the
+  product changed (two axes). Cite our own SHAP output as evidence of
+  digging in: `additives_n` at **−1.62 arguing against class 4** — the
+  model isn't counting additives, it's reading industrial formulation.
+- [ ] 13.2 Rehearse the live demo with **3 real barcodes** picked in
+  advance, chosen to cover the headline quadrants:
+  1. **ultra-processed but nutritionally decent** — muesli,
+  2. **ultra-processed and red** — candy bar,
+  3. **minimally processed but red** — butter or olive oil (this one
+     proves the two axes are genuinely independent).
+  Also rehearse the camera on the **exact device and URL you'll present
+  from** — localhost and deployed behave differently (see 11.3).
 - [ ] 13.3 Record a backup video of the full demo working, in case of
   live network/deployment issues on presentation day.
 - [ ] 13.4 Rehearse the trained-vs-live two-beat (from §1) as the answer to
