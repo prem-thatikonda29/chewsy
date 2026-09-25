@@ -26,7 +26,7 @@ services:
       - key: MLFLOW_DISABLE_AGENT_HINT
         value: "1"
       - key: FRONTEND_ORIGINS
-        # set to the Vercel URL after the UI project exists
-        # (comma-separated if preview + production URLs differ)
-        sync: false
+        # Vercel UI (HTTPS keeps getUserMedia alive) — comma-separated
+        # if preview + production URLs differ
+        value: https://frontend-fawn-five-70.vercel.app
     healthCheckPath: /health
