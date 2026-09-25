@@ -1381,11 +1381,30 @@ null-rate change: OFF pages that stop recording fiber show up as a rising
   Tests: `TestStructuredRequestLogging` (success line fields, 404 line
   with null class, per-class increment, sparse increment on stub).
   Suite 114 passed + 1 gated skip (was 110+1).
-- [ ] 12.2 If time allows: a small script comparing live-fetched nutrient
-  distributions against `training_reference.csv` using `scipy.stats.ks_2samp`
-  — even a single manual run of this, shown as a plot in your slides, is
-  enough to demonstrate the concept without a full always-on drift job.
-
+- [x] 12.2 If time allows: a small script comparing live-fetched nutrient
+  distributions against `training_reference.csv` using
+  `scipy.stats.ks_2samp` — even a single manual run of this, shown as a
+  plot in your slides, is enough to demonstrate the concept without a
+  full always-on drift job.
+  **Done 25 Sep 2026 (TDD — 14 tests, red first):** `src/drift_check.py`
+  (`--n 100` random sweep / `--barcodes file.csv` deterministic re-run /
+  `--ref`/`--out`): live rows travel the exact serving path
+  (`off_client.fetch_product` → `build_feature_frame` → compare in the
+  reference's 20-col input space), KS on non-null values for numeric
+  nutrient/count columns + **null-fraction delta on every shared column**
+  (the Stage 12 handoff's documentation-drift signal), indicators
+  (`*_was_missing`) get null-delta only, text null-delta counts `""` as
+  missing (serving rows carry `""` where training has NaN — first run's
+  spurious −0.202 pseudo-text shift was this artifact). Sort worst-first,
+  threshold line 0.15, plot `docs/drift_report.png` (committed — slides
+  asset). **Live run (25 Sep, 100/100 rows, 0 skips):** worst KS
+  `energy_100g` 0.302 (p=7e-07), `fiber_100g` 0.279 (p=0.018), 4/12 cols
+  over threshold; biggest null shift `fiber_100g +0.185 (53% → 71%)` —
+  the PRD's own fiber example, live. Live-run findings baked back in as
+  tests: search API 400s without a `q` param (empty string = broad
+  sweep); product API 429s under sweep → `collect_live` now paces 0.3s
+  and backs off once on 429 (first run dropped 80/100, rerun 0/100).
+  Suite 128 passed + 1 gated skip (was 114+1).
 ### Stage 13 — Presentation Prep
 - [ ] 13.1 Slides: problem (Yuka framing) → live demo → brief technical
   depth (pick 2–3 "why this, not that" moments to go deep on, don't try to
