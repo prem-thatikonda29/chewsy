@@ -1018,6 +1018,33 @@ anything requiring a second backend fetch.
   `fps 10`, stream stopped before `onDecode` fires; mechanism comment
   recorded in-file.
 
+  **Mobile bugfix (user report 26 Sep 2026 — "not centered / not
+  detecting on phone"):** root cause found in the html5-qrcode source
+  before touching code. (a) `foreverScan` extracts its scan strip with
+  `widthRatio = videoWidth / clientWidth` — valid only when the whole
+  native frame maps 1:1 onto the video's CSS box; the original
+  `h-full object-cover` center-cropped 16:9 phone cameras into the 4:3
+  container, so the decoder read a horizontally shifted/squashed region
+  ≠ what's on screen (4:3 desktop webcams were unaffected — cover was a
+  no-op, which is why the desktop demo passed). (b) The viewfinder
+  overlay is sized from the video's client box but anchored to the
+  viewport div — the two only coincide when that div hugs the video, so
+  `absolute inset-0` on a fixed-aspect container let the aiming hole
+  drift off the frame. Fixes: viewport div in-flow (`relative w-full`,
+  not `absolute inset-0`), video `[&_video]:block [&_video]:h-auto
+  [&_video]:w-full!` (native aspect, full frame → library ratio math
+  exact; `!important` beats the lib's inline px width so rotation
+  resizes it), container drops `aspect-[4/3]` while scanning so
+  container == viewport == video == scan region, `qrbox` now a function
+  clamped to the viewfinder (80%×60%, mins 100×60 above the lib's 50px
+  floor — a fixed 240×160 can exceed short viewfinders and make
+  `start()` throw), **and while scanning on phones (<md) the component
+  goes `fixed inset-0` fullscreen** (body scroll locked) so only the
+  camera box is on screen — desktop (md+) keeps the in-card layout.
+  typecheck/lint/build green; built CSS verified to contain
+  `width:100%!important` video rule, `max-md:fixed{position:fixed}`,
+  `z-index:100`.
+
   **Config specifics:**
   - Restrict formats to `EAN_13`, `UPC_A`, `EAN_8` — scanning all formats
     every frame is measurably slower; these three cover Indian, European

@@ -19,6 +19,21 @@
 // packaging), rear camera via facingMode: 'environment', and the stream is
 // stopped on first successful decode — otherwise it keeps firing and
 // double-submits.
+//
+// Mobile geometry (bugfix 26 Sep 2026 — "not centered / not scanning on
+// phone"): html5-qrcode's foreverScan extracts the scan strip with
+// `widthRatio = videoWidth / clientWidth`, which is only correct when the
+// WHOLE native frame maps 1:1 onto the video's CSS box. Forcing the video
+// to fill the container (`h-full object-cover`) center-crops 16:9 phone
+// cameras into the 4:3 box → decoder reads a shifted/squashed region ≠
+// what's on screen. Its viewfinder overlay is also sized from the VIDEO's
+// client box but anchored to the viewport div, so the two only line up
+// when that div hugs the video. Fix: viewport div in-flow (not
+// `absolute inset-0`), video `w-full! h-auto` (native aspect, entire
+// frame visible → ratio math exact), container drops its fixed 4:3 once
+// scanning so viewport == video == scan region, qrbox scales with the
+// viewfinder, and while scanning on phones (<md) the component goes
+// fixed fullscreen so only the camera box is on screen.
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Camera, CameraOff, Keyboard, ShieldAlert, Loader2 } from "lucide-react";
@@ -76,6 +91,19 @@ export default function BarcodeScanner({ onDecode, busy }: BarcodeScannerProps) 
     };
   }, []);
 
+  // Fullscreen camera on phones (<md): while scanning the whole component
+  // becomes a fixed panel so only the camera box is visible; body scroll
+  // locked so the page behind can't swipe under it. md+ keeps the in-card
+  // layout (desktop demo verified that way).
+  useEffect(() => {
+    if (!scanning) return;
+    const previous = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => {
+      document.body.style.overflow = previous;
+    };
+  }, [scanning]);
+
   const startScanner = useCallback(async () => {
     setError(null);
     setStarting(true);
@@ -112,7 +140,13 @@ export default function BarcodeScanner({ onDecode, busy }: BarcodeScannerProps) 
         { facingMode: "environment" },
         {
           fps: 10,
-          qrbox: { width: 240, height: 160 },
+          // scales with the actual viewfinder (lib minimum is 50px);
+          // a fixed 240×160 both mis-fits odd phone aspects and can
+          // exceed short viewfinders, which makes start() throw
+          qrbox: (w, h) => ({
+            width: Math.min(Math.max(Math.round(w * 0.8), 100), 320),
+            height: Math.min(Math.max(Math.round(h * 0.6), 60), 220),
+          }),
         },
         (decodedText) => {
           // Stop on first decode — the stream would otherwise keep firing
@@ -154,10 +188,29 @@ export default function BarcodeScanner({ onDecode, busy }: BarcodeScannerProps) 
   }, [onDecode, stopScanner]);
 
   return (
-    <div className="flex flex-col gap-3">
-      <div className="relative overflow-hidden rounded-xl border border-border bg-foreground/95 aspect-[4/3]">
-        {/* html5-qrcode injects a <video> here; empty until start(). */}
-        <div id={containerId} className="absolute inset-0 [&_video]:h-full [&_video]:w-full [&_video]:object-cover" />
+    <div
+      className={
+        scanning
+          ? "flex flex-col gap-3 max-md:fixed max-md:inset-0 max-md:z-[100] max-md:justify-center max-md:bg-background"
+          : "flex flex-col gap-3"
+      }
+    >
+      {/* Box hugs the video while scanning (see header note: viewport div
+          must equal the video box or the lib's viewfinder/scan region
+          drift apart); 4:3 only before start, when there's no video yet. */}
+      <div
+        className={`relative overflow-hidden rounded-xl border border-border bg-foreground/95 ${
+          scanning ? "max-md:rounded-none max-md:border-0" : "aspect-[4/3]"
+        }`}
+      >
+        {/* html5-qrcode injects a <video> here; empty until start().
+            In-flow (not absolute) so the box and this div hug the video's
+            native-aspect height — the lib anchors its scan-region overlay
+            to THIS element sized from the video element. */}
+        <div
+          id={containerId}
+          className="relative w-full [&_video]:block [&_video]:h-auto [&_video]:w-full!"
+        />
         {!scanning && !starting && (
           <div className="absolute inset-0 grid place-content-center justify-items-center gap-3 p-6 text-center">
             <Camera className="size-8 text-primary" aria-hidden="true" />
@@ -216,7 +269,11 @@ export default function BarcodeScanner({ onDecode, busy }: BarcodeScannerProps) 
         </Alert>
       )}
 
-      <p className="flex items-center gap-1.5 text-xs text-muted-foreground">
+      <p
+        className={`flex items-center gap-1.5 text-xs text-muted-foreground ${
+          scanning ? "max-md:hidden" : ""
+        }`}
+      >
         <Keyboard className="size-3.5" aria-hidden="true" />
         {FORMAT_NOTE} Lighting or focus failing? Type it below.
       </p>
