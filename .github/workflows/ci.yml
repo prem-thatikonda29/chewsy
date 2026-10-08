@@ -6,6 +6,9 @@
 #     (model.joblib is gitignored/DVC-tracked and is BAKED into the image,
 #      so a fresh runner must pull before both pytest and docker build)
 #   DOCKERHUB_USERNAME / DOCKERHUB_TOKEN       — docker login + push
+#   RENDER_API_KEY                             — Render API key (account settings →
+#     API keys). Used to trigger a deploy of chewsy-api after the push:
+#     image-backed services don't redeploy on a new push. Treat it as a secret.
 # Local push/pull parity: the two AWS_*_CHECKSUM env vars below neutralize
 # the botocore trailing-CRC32 that breaks the HuggingFace S3 gateway.
 name: ci
@@ -99,3 +102,20 @@ jobs:
         run: |
           docker push "${{ secrets.DOCKERHUB_USERNAME }}/chewsy:latest"
           docker push "${{ secrets.DOCKERHUB_USERNAME }}/chewsy:${GITHUB_SHA::7}"
+
+      # Render does not redeploy an image-backed service when a new image is
+      # pushed, so trigger the deploy explicitly through the Render API. The
+      # key is passed via env (never echoed); the step fails if Render rejects it.
+      - name: Trigger Render deploy
+        env:
+          RENDER_API_KEY: ${{ secrets.RENDER_API_KEY }}
+          RENDER_SERVICE_ID: srv-dar8ecjncjis73chg7q0
+        run: |
+          if [ -z "$RENDER_API_KEY" ]; then
+            echo "RENDER_API_KEY not set; cannot trigger Render deploy" >&2
+            exit 1
+          fi
+          curl -fsS -X POST "https://api.render.com/v1/services/${RENDER_SERVICE_ID}/deploys" \
+            -H "Authorization: Bearer ${RENDER_API_KEY}" \
+            -H "Accept: application/json" \
+            -o /dev/null -w "Render deploy: HTTP %{http_code}\n"
