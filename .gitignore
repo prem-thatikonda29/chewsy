@@ -28,3 +28,7 @@ frontend/.next/
 
 # macOS
 .DS_Store
+
+# Slides / Q&A prep (hand-made presentation files — not repo content)
+*.pptx
+Chewsy — Q&A Prep.html
