@@ -87,7 +87,7 @@ same exclusion as the feature set (Hard rule 2).
 
 | Requirement | Where it lives in this project |
 |---|---|
-| GitHub repo, real commit history | Stages 0–13 below = your commit sequence |
+| GitHub repo, real commit history | Stages 0–12 below = your commit sequence |
 | Working UI → API → model | Next.js frontend → FastAPI `/predict` → `model.joblib` |
 | Docker Hub image via CI/CD | GitHub Actions workflow, Stage 9 |
 | DVC for dataset + pipeline | `dvc.yaml` stages, Stage 1 & 10 |
@@ -108,7 +108,6 @@ same exclusion as the feature set (Hard rule 2).
 | Day 2 midday | 2 hrs | 10 | MUST |
 | Day 2 PM | 2–3 hrs | 12 (light), slides | MUST |
 | Day 2 evening | 1–2 hrs, only if ahead | 11 (EC2) | SHOULD (bonus) |
-| Day 2 night / morning of 26th | 1–2 hrs | 13 (rehearsal + backup recording) | MUST |
 
 If you're behind schedule at any checkpoint: **cut Stage 11 first, then trim
 Stage 12 to a single `/metrics` endpoint with no live drift job.** Never cut
@@ -1120,16 +1119,15 @@ anything requiring a second backend fetch.
   mirrors `app/schemas.py` field-for-field; camera gates by `name` of the
   DOMException — insecure/permission/nodevice each render an Alert and
   keep manual entry live; missing image → `ImageOff` placeholder.)
-- [ ] 7.11 Verification: `npm run typecheck` + `npm run build` green, one
+- [x] 7.11 Verification: `npm run typecheck` + `npm run build` green, one
   manual camera e2e against the local API, and 6.7's extended pytest
   suite green (no frontend test suite required by the PRD).
   **Status 25 Sep 2026:** typecheck ✅ lint ✅ build ✅ (static `/`),
   pytest ✅ 110 passed + 1 gated skip, plus a 33-check automated
   headless-Chrome e2e (scan → result card → history → 404 error → reset
   → sparse stub scan showing the forced low-information state, zero
-  unexpected console/network errors). **Remaining: the manual camera
-  e2e — needs a physical camera + human at `localhost:3000` with the
-  API on :8000.**
+  unexpected console/network errors). **Done 8 Oct 2026:** manual camera
+  e2e completed on a physical device (confirmed by the user).
 - [x] 7.12 Commit: `feat: Next.js scanner UI` (this commit).
 - [x] 7.13 **Scope addition (approved 25 Sep 2026 — sparse result state,
   Fix 2 frontend half):** when the API returns `data_sparse: true` the
@@ -1432,63 +1430,6 @@ null-rate change: OFF pages that stop recording fiber show up as a rising
   sweep); product API 429s under sweep → `collect_live` now paces 0.3s
   and backs off once on 429 (first run dropped 80/100, rerun 0/100).
   Suite 128 passed + 1 gated skip (was 114+1).
-### Stage 13 — Presentation Prep
-- [ ] 13.1 Slides: problem (Yuka framing) → live demo → brief technical
-  depth (pick 2–3 "why this, not that" moments to go deep on, don't try to
-  narrate every stage above) → MLOps pipeline diagram → close.
-  **Add the muesli beat:** the model said NOVA 4 on a product that sounds
-  healthy; investigation found no bug — *the bug was the headline*, so the
-  product changed (two axes). Cite our own SHAP output as evidence of
-  digging in: `additives_n` at **−1.62 arguing against class 4** — the
-  model isn't counting additives, it's reading industrial formulation.
-  **Add the sparse-view beat (the honest-metrics slide, content ready
-  25 Sep 2026):** "Our model scores **0.95 macro-F1 on complete
-  records**… and on thin records — no ingredient list, no category tags —
-  the original model scored **0.41** on the exact same held-out rows."
-  Then the investigation → fix arc: 76% of live OFF records are thin
-  (null taxonomy §14.1), training contained **{1:179, 2:3759, 3:96, 4:0}**
-  no-text rows so blank input pulled to class 1/2, fix = stratified
-  full-stub augmentation swept 0/10/20/30% as tracked MLflow params →
-  final: **0.95 complete / 0.77 thin** (class-4 thin: 0.00 → 0.70),
-  cost = −0.002 on complete records. The 0.41 → 0.77 delta *is* the
-  story; never present 0.95 alone. Both numbers come from the same
-  eval split and the same simulator — say so.
-- [ ] 13.2 Rehearse the live demo with **3 real barcodes** picked in
-  advance, chosen to cover the headline quadrants:
-  1. **ultra-processed but nutritionally decent** — muesli,
-  2. **ultra-processed and red** — candy bar,
-  3. **minimally processed but red** — butter or olive oil (this one
-     proves the two axes are genuinely independent).
-  Also rehearse the camera on the **exact device and URL you'll present
-  from** — localhost and deployed behave differently (see 11.3).
-  **Verified barcodes (25 Sep 2026, live recheck on the v4 champion):**
-  Nutella `3017620422003` → NOVA 4 @ 0.999 (credibility beat, OFF-labeled);
-  Coca-Cola `5449000000996` → NOVA 4 @ 0.999 (complete entry);
-  Red Bull `9002490100070` → NOVA 4 @ 0.993 / Sting `8902080000227` →
-  NOVA 4 @ 1.000 (energy drink — the headline-complaint fix, they
-  classify correctly). Quadrant picks 1–3 still to be locked in by
-  eye.
-  **Deliberate 4th scan (approved): Diet Coke `5000112644906`** — a
-  real stub record (all-zero nutrients, no ingredients, no tags).
-  Rehearse it as the sparse-honesty beat: response carries
-  `data_sparse: true`, UI shows "not enough information to classify"
-  while nutrition chips stay green, and narrate the 0.41 → 0.77 fix
-  (13.1 beat) — then optionally show `data_sparse: false` on the same
-  product's fuller record if OFF grows one (name+brand record matching
-  is the future-work slide: when a stub barcode and a documented
-  record exist for the same product, a `name+brand` lookup could join
-  them — not built, timeboxed out).
-- [ ] 13.3 Record a backup video of the full demo working, in case of
-  live network/deployment issues on presentation day.
-- [ ] 13.4 Rehearse the trained-vs-live two-beat (from §1) as the answer to
-  "is this just looking up OFF's data?":
-  1. **Credibility beat:** scan a labeled product (Nutella, OFF says
-     NOVA 4) — our model independently computes 4 from raw ingredients,
-     having never read OFF's stored label.
-  2. **Coverage beat:** scan an unlabeled regional snack — the model
-     still produces a confident verdict, because it only ever needed the
-     raw ingredients. A pure lookup has nothing to say here; we do.
-
 ---
 
 ## 6. Standing Risks to Watch

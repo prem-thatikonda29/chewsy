@@ -163,7 +163,7 @@ out as deleted), `en.openfoodfacts.org.products.tsv`,
 
 ## Stage workflow
 
-Work the PRD stages in order (0→13). For each stage:
+Work the PRD stages in order (0→12). For each stage:
 
 0. **Propose before you build.** Present the stage plan first — the PRD
    checklist plus any evidence-backed enhancements or deviations you
