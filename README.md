@@ -413,23 +413,41 @@ GitHub Actions (`.github/workflows/ci.yml`) runs three jobs on every push:
 |---|---|---|
 | `test` | every push | `dvc pull`, then `pytest` |
 | `frontend` | every push | `npm ci`, `typecheck`, `lint`, `build` |
-| `docker` | pushes to `main`, after `test` passes | Builds the image and pushes `:latest` and `:<sha>` to Docker Hub |
+| `docker` | pushes to `main`, after `test` passes | Builds the image, pushes `:latest` and `:<sha>` to Docker Hub, then triggers a Render deploy of the API |
 
-The `test` and `docker` jobs need the `AWS_ACCESS_KEY_ID` and `AWS_SECRET_ACCESS_KEY` secrets
-for `dvc pull`. The `docker` job also needs `DOCKERHUB_USERNAME` and `DOCKERHUB_TOKEN`.
+The `docker` job runs the deploy step **only after the image push succeeds**. A failed push
+never redeploys the API. Each push to `main` that passes tests therefore ships to Render with
+no manual step.
+
+Required GitHub Actions secrets:
+
+| Secret | Used by | Purpose |
+|---|---|---|
+| `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY` | `test`, `docker` | `dvc pull` of the training data and `model.joblib` |
+| `DOCKERHUB_USERNAME`, `DOCKERHUB_TOKEN` | `docker` | Log in to and push the image |
+| `RENDER_API_KEY` | `docker` | Authenticates the Render API call that deploys `chewsy-api` |
+
+The Render deploy calls `POST https://api.render.com/v1/services/<service-id>/deploys`
+with the key as a bearer token. The service ID is set in `ci.yml`. The key is never printed in
+logs. Render does not redeploy image-backed services on a new push by itself, which is why the
+step exists.
 
 ## Deployment
 
 - **API:** Render (free tier), running the prebuilt Docker Hub image that CI pushes. The
   image runs with `APP_MODE=api`, so the container serves only uvicorn on `$PORT`. Render
   never builds from the repo, because `model.joblib` is git-ignored.
+- **Automatic redeploy:** a push to `main` that passes tests and pushes the image triggers
+  a Render deploy from CI (see [Tests and CI](#tests-and-ci)). Use the Render dashboard only for
+  manual redeploys or rollbacks.
 - **UI:** Vercel, at [chewsy-scanner.vercel.app](https://chewsy-scanner.vercel.app). HTTPS keeps
   the camera available on phones.
 - **Full stack in one container:** `docker build -t chewsy .` followed by
   `docker run -p 8000:8000 -p 3000:3000 chewsy` runs the API and the Next.js server together.
   The build-time `NEXT_PUBLIC_API_URL` defaults to `http://localhost:8000`.
 - **CORS:** the API allows the origins in `FRONTEND_ORIGINS`. The value is read once at
-  startup, so changing it on Render requires a manual redeploy.
+  startup, so changing it on Render requires a redeploy. Set the variable in the Render dashboard,
+  then trigger a deploy from there, because CI only redeploys when an image is pushed.
 - **Cold starts:** free Render instances sleep after 15 minutes idle. Expect roughly 30–60 s
   on the first request after that.
 
@@ -459,6 +477,7 @@ Kept deliberately lightweight, as the PRD scoped it:
 | `NEXT_PUBLIC_API_URL` | Frontend (build time) | `http://localhost:8000` | Where the browser sends `/predict` |
 | `CHEWSY_LIVE_OFF` | tests | unset | Set to `1` to enable the live Open Food Facts test |
 | `MLFLOW_DISABLE_AGENT_HINT` | MLflow | — | Set to `1` to silence the MLflow agent hint (set in CI and on Render) |
+| `RENDER_API_KEY` | CI (`docker` job) | — | GitHub secret. Render API key used to trigger the API deploy |
 | `AWS_*_CHECKSUM_*` | DVC | — | Set both to `when_required` for `s3.hf.co` |
 
 ## Command reference
